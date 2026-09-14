@@ -1,2 +1,217 @@
-# Brazilian-E-Commerce-analisy
-Analise de dados do E-Commerce brasileiro em Python
+# Data Warehouse de e-commerce brasileiro
+
+Trabalho acadêmico de Data Warehouse / BI: integração de vendas, logística e satisfação do cliente do Olist com municípios e indicadores socioeconômicos do IBGE.
+
+O projeto prioriza SQL legível, decisões de negócio documentadas e execução local. Não inclui dashboard, nuvem, Docker, Spark ou Airflow.
+
+## Estado atual
+
+Somente a estrutura e o planejamento estão preparados. O pipeline ainda não foi implementado ou executado. Nenhuma contagem, amostra ou taxa de match foi calculada.
+
+Implementação com revisão ao final de cada etapa:
+
+1. Bronze: ingestão fiel e linhagem.
+2. Silver: limpeza, tipagem e agregações.
+3. Integração de municípios: match exato, fallback geográfico e de-para manual.
+4. Gold: dimensões e fatos materializadas.
+5. Qualidade: validações e relatório.
+
+## Ambiente
+
+Python 3.11 ou superior. Dependências diretas em `requirements.txt`:
+
+- DuckDB: transformações SQL e banco dimensional.
+- pandas: manipulações tabulares quando forem mais simples que SQL.
+- PyArrow: suporte a Parquet nas operações com pandas.
+
+No PowerShell, a partir da raiz do repositório:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+As versões ainda não estão fixadas: serão registradas após validar a primeira camada no ambiente real. O acesso HTTP ao IBGE usará a biblioteca padrão do Python.
+
+Ao término da implementação, o comando de execução será:
+
+```powershell
+python src/run_pipeline.py
+```
+
+Esse arquivo ainda não existe nesta etapa. Não são usados dados sintéticos ou mocks. Arquivos obrigatórios ausentes deverão interromper a execução com nome e caminho esperados.
+
+## Estrutura
+
+```text
+.
+├── src/
+│   ├── bronze/
+│   ├── silver/
+│   ├── gold/
+│   └── utils/
+├── data/
+│   ├── raw/
+│   │   ├── olist/
+│   │   ├── ibge/
+│   │   └── socioeconomico/
+│   ├── bronze/
+│   ├── silver/
+│   └── gold/
+├── docs/
+├── de_para_municipios.csv
+├── requirements.txt
+└── README.md
+```
+
+Os módulos serão adicionados na etapa correspondente: `src/run_pipeline.py`, `src/bronze/ingest.py`, `src/silver/transform.py`, `src/silver/integracao_municipios.py`, `src/gold/dimensional.py`, `src/gold/qualidade.py` e `src/utils/normalizacao.py`.
+
+## Fontes e preparação dos arquivos
+
+### 1. Olist — download manual
+
+Baixar o [Brazilian E-Commerce Public Dataset by Olist](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) e colocar estes nove arquivos em `data/raw/olist/`:
+
+```text
+olist_orders_dataset.csv
+olist_order_items_dataset.csv
+olist_products_dataset.csv
+olist_customers_dataset.csv
+olist_sellers_dataset.csv
+olist_order_payments_dataset.csv
+olist_order_reviews_dataset.csv
+olist_geolocation_dataset.csv
+product_category_name_translation.csv
+```
+
+O projeto não fará download do Kaggle por script.
+
+### 2. IBGE Localidades — JSON com cache
+
+Endpoint: [municípios do IBGE](https://servicodados.ibge.gov.br/api/v1/localidades/municipios).
+
+Na primeira ingestão, o pipeline obterá a resposta e a guardará em `data/raw/ibge/municipios.json`. Nas execuções seguintes, reutilizará o cache. A ausência desse cache é a única ausência de fonte que permite obtenção automática; falha na API deverá interromper a execução com uma mensagem clara.
+
+A resposta original será preservada, com registro da data de obtenção. Não se pressupõe uma contagem fixa de municípios ou presença universal das antigas microrregiões e mesorregiões. A hierarquia disponível será usada para obter UF e região. O cadastro atual pode diferir do recorte de 2017; incompatibilidades serão reportadas.
+
+### 3. SIDRA — retrato socioeconômico de 2017
+
+Preparar manualmente `data/raw/socioeconomico/indicadores_municipais.csv` com este cabeçalho exato:
+
+```csv
+cod_ibge,ano_referencia,populacao_estimada,pib_per_capita
+```
+
+| Coluna | Contrato |
+| --- | --- |
+| `cod_ibge` | Código municipal de sete dígitos, lido como texto |
+| `ano_referencia` | Inteiro 2017 |
+| `populacao_estimada` | Quantidade inteira de habitantes |
+| `pib_per_capita` | Reais por habitante; ponto como separador decimal |
+
+Regras:
+
+- UTF-8, vírgula como delimitador e uma única linha de cabeçalho.
+- Uma linha por município, sem códigos duplicados; código e ano são obrigatórios.
+- Sem separador de milhar, símbolo monetário, totais estaduais, títulos ou rodapés.
+- Indicadores ausentes ficam vazios; não substituir por zero.
+- Selecionar todos os municípios e o ano de 2017 para ambos os indicadores.
+- Não misturar PIB total, valores em milhares de reais e PIB per capita.
+
+Referências: [população estimada, tabela 6579](https://sidra.ibge.gov.br/tabela/6579) e [PIB municipal, tabela 5938](https://sidra.ibge.gov.br/tabela/5938). Na segunda, selecionar o indicador PIB per capita em reais.
+
+Guardar as exportações originais em `data/raw/socioeconomico/originais/` e documentar em `docs/` os filtros, unidades e ajustes feitos para preparar o CSV. O pipeline consumirá o arquivo consolidado acima; os originais serão preservados para auditoria, sem serem concatenados automaticamente à entrada.
+
+Os indicadores de 2017 serão atributos fixos da geografia para todo o período de vendas. Não permitirão concluir sobre evolução anual de população ou PIB.
+
+## Integração de municípios
+
+O IBGE Localidades é o cadastro canônico de códigos e nomes, mas não fornece coordenadas municipais. Foi aprovado manter somente os insumos previstos, usando pontos representativos estimados a partir do próprio Olist.
+
+A ordem será:
+
+1. **Normalização e match exato:** NFKD, remoção de acentos, minúsculas, remoção de pontuação e redução de espaços repetidos. A chave sempre inclui cidade normalizada e UF. Chaves ambíguas não serão aceitas automaticamente.
+2. **Fallback geográfico:** agregar latitude e longitude por prefixo de CEP pela mediana. Estimar pontos representativos municipais apenas com coordenadas de localidades Olist que tiveram match exato com o IBGE. Buscar por Haversine o candidato da mesma UF. Esses pontos são aproximações do Olist, não sedes ou centroides oficiais; municípios sem evidência não terão ponto inventado. Matches do fallback não alimentarão novamente a referência.
+3. **De-para manual:** resolver o resíduo por `de_para_municipios.csv`, versionado e inicialmente apenas com cabeçalho. Não há correspondências inventadas.
+
+O fallback terá limite de distância e rejeição de ambiguidade. Os valores desses critérios serão definidos e documentados na etapa de integração, com inspeção dos dados reais. Coordenadas inválidas serão sinalizadas e excluídas do cálculo espacial, preservando seus registros de origem. Proximidade não comprova pertencimento ao município, especialmente nas fronteiras municipais.
+
+Layout do de-para:
+
+```csv
+cidade_normalizada,uf,cod_ibge,justificativa
+```
+
+A UF deverá coincidir com a do município de destino. A chave cidade/UF deverá ser única. Cada preenchimento deverá ter justificativa verificável.
+
+A integração atenderá clientes e vendedores. A taxa principal será a proporção de registros de clientes (`customer_id`) mapeados, com contagem por método e lista dos não resolvidos, impressas e persistidas. Não se promete antecipadamente uma taxa mínima. A cobertura dos indicadores socioeconômicos será medida separadamente.
+
+## Arquitetura medalhão
+
+### Bronze
+
+Parquet com campos de origem como strings, sem limpar valores ou renomear colunas; acrescentar somente `_fonte`, `_arquivo_origem` e `_data_ingestao`. Para JSON, preservar também sua estrutura original. Cópias dos arquivos originais serão mantidas na bronze para possibilitar reconstrução byte a byte, além da representação tabular.
+
+A data de primeira ingestão será mantida enquanto o conteúdo da fonte permanecer igual. A verificação de conteúdo permitirá reconhecer fontes inalteradas e preservar a idempotência.
+
+### Silver
+
+Parquet com nomes padronizados em português, timestamps e números tipados. Valores monetários usarão `DECIMAL`.
+
+- Categoria ausente: `nao_informado`, preservando os produtos e suas vendas.
+- Entrega ausente: manter o nulo e uma flag; métricas de prazo apenas para entregues com datas válidas. Ausência de prazo ou atraso não significa zero.
+- Peso e dimensões ausentes: mediana da categoria, com identificação da imputação. Se a categoria não tiver valores suficientes, manter nulo e registrar a ocorrência.
+- Geolocalização: mediana por prefixo de CEP, preservando zeros à esquerda do prefixo.
+- Avaliações: manter a mais recente por data de criação, com desempate determinístico; preservar as demais na bronze.
+- Pagamentos: agregar por pedido antes dos joins. Tipo predominante é aquele com maior valor agregado; parcelas são o máximo observado nesse tipo. Empates terão regra estável documentada.
+- Frete: sinalizar outliers sem apagar valores. Não haverá winsorização por padrão.
+- Derivadas: `dias_ate_entrega`, `dias_atraso`, `flag_atraso`, `distancia_km`, `ano_mes` e `faixa_preco`. Distância é geodésica aproximada entre vendedor e cliente, não distância rodoviária.
+
+Limiares de faixas de preço, peso, parcelas e porte municipal, assim como a regra de outliers, serão explicitados na implementação da respectiva etapa.
+
+### Gold
+
+Banco local `data/gold/dw.duckdb`, com surrogate keys sequenciais, ordenação determinística pelas chaves naturais e índices nas FKs.
+
+| Tabela | Grão ou chave natural |
+| --- | --- |
+| `fato_item_pedido` | Um item: pedido + identificador do item |
+| `fato_pedido` | Um pedido, inclusive pedidos sem itens |
+| `dim_tempo` | Uma data; mínimo de 2016-01-01 a 2018-12-31 |
+| `dim_produto` | `product_id` |
+| `dim_cliente` | `customer_unique_id` |
+| `dim_vendedor` | `seller_id` |
+| `dim_geografia` | Código IBGE, com indicadores de 2017 |
+| `dim_pagamento` | Combinação de tipo predominante e parcelas |
+
+A fato de itens terá `sk_tempo_compra`, `sk_tempo_entrega`, `sk_produto`, `sk_cliente`, `sk_vendedor`, `sk_geo_cliente` e `sk_pagamento`; pedido como dimensão degenerada; medidas de produto, frete, total do item, prazo, atraso, distância e avaliação. O identificador do item será preservado para verificar seu grão.
+
+A geografia da fato será a do endereço daquele pedido: uma pessoa pode comprar em endereços diferentes. A dimensão cliente não substituirá esse endereço por uma localização única atual.
+
+A dimensão tempo será usada nos papéis compra e entrega e ampliada se houver datas reais fora do intervalo previsto. Membros técnicos de ausência permitirão FKs válidas sem inventar clientes, produtos, datas ou municípios reais.
+
+Todas as dimensões usarão SCD Tipo 1, sem histórico de versões. Tipo 2 seria aplicável a produtos se existisse histórico de mudanças; o dataset é um snapshot.
+
+## Regras de métricas e granularidade
+
+- O valor total do item é preço + frete. Valores de pagamentos não serão repetidos e somados no grão de item.
+- A avaliação é por pedido: sua presença na fato de itens serve a análises específicas, mas médias de satisfação serão calculadas na `fato_pedido`.
+- Prazo médio e percentual de atraso também serão calculados por pedido, evitando ponderação pelo número de itens.
+- Recompra usará a identidade `customer_unique_id` e pedidos distintos.
+- O termo faturamento deverá explicitar os status incluídos e se inclui frete. A reconciliação técnica comparará o mesmo conjunto de itens e as mesmas medidas entre silver e gold.
+
+## Qualidade e reprodutibilidade
+
+Ao final, `data/gold/qualidade.md` deverá apresentar:
+
+- Contagem de órfãos em cada FK, esperada igual a zero.
+- Unicidade de PKs e do grão das duas fatos.
+- Reconciliação de valores monetários da gold com a silver.
+- Taxa de match municipal, métodos utilizados e casos não resolvidos.
+- Contagens por tabela em cada camada.
+
+O pipeline usará `logging` com entradas e saídas por etapa. Erros não serão escondidos com capturas genéricas. Nenhuma linha com nulo será descartada silenciosamente.
+
+A idempotência será verificada com as mesmas fontes, cache, de-para e dependências: duas execuções deverão manter conteúdos, chaves e totais iguais, sem acumular duplicatas. Isso não exige que o arquivo físico do banco DuckDB tenha bytes idênticos.
+
+As saídas reais, amostras e limitações serão apresentadas após cada camada implementada. A próxima etapa é a bronze, após revisão desta estrutura.
