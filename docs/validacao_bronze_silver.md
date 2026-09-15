@@ -3,13 +3,13 @@
 > Gerado por `src/qualidade/validar_camadas.py` a cada execucao do
 > pipeline. Nao editar a mao.
 
-Gerado em 2026-09-15 11:50:10.
+Gerado em 2026-09-15 16:41:15.
 
 ## Resumo executivo
 
-- Testes executados: 121
-- Aprovados: 103
-- Alertas: 18
+- Testes executados: 114
+- Aprovados: 104
+- Alertas: 10
 - Reprovados: 0
 - Nao executados: 0
 - **Resultado geral: APROVADO COM ALERTAS**
@@ -168,14 +168,7 @@ Gerado em 2026-09-15 11:50:10.
 | `INT-SOC-001` | Municipios sem populacao estimada | ausencia permanece nula (plano 14.5) | 1 | ALERTA |
 | `INT-SOC-002` | Municipios sem PIB per capita | ausencia permanece nula (plano 14.5) | 1 | ALERTA |
 | `INT-SOC-003` | Clientes em municipio sem indicador | informativo (plano 14.5) | 0 | APROVADO |
-| `CTR-NOME-001` | Arquivos com o nome fixado em contratos_dados.md secao 4 | 3 arquivo(s) | 0 com o nome do contrato | ALERTA |
-| `CTR-COL-001` | Colunas do contrato ausentes sem equivalente na silver | 0 | 5 | ALERTA |
-| `CTR-COL-002` | Colunas do contrato gravadas com outro nome | 0 | 22 | ALERTA |
-| `CTR-TIPO-001` | Tipos conforme o contrato (monetario DECIMAL(12,2), secao 1) | 0 | 6 | ALERTA |
-| `CTR-REGRA-001` | Regra do outlier de frete | contrato 4.2: valor_frete acima do p99 | implementado: cerca de Tukey, Q3 + 1.5 * IQR (silver_contrato 4) | ALERTA |
-| `CTR-REGRA-002` | Desempate do tipo de pagamento predominante | contrato 4.6: ordem fixa credit_card > boleto > debit_card > voucher | implementado: ordem alfabetica ascendente de payment_type | ALERTA |
-| `CTR-REGRA-003` | Texto do comentario da avaliacao | contrato 4.7: o texto do comentario nao e carregado | implementado: titulo_review e mensagem_review carregados na silver | ALERTA |
-| `CTR-CARD-001` | Cardinalidade do cadastro municipal | 5570 (contrato secoes 3 e 6.2) | 5571 | ALERTA |
+| `CTR-INTERFACE-001` | Onze entradas: arquivos, tipos exatos, nulidade e grao | 0 | 0 | APROVADO |
 | `REP-001` | Nenhum artefato em disco de etapa cujo modulo nao existe | 0 | 0 | APROVADO |
 | `REP-002` | Saidas da integracao nao sao mais antigas que as da silver | 0 | 0 | APROVADO |
 | `REP-003` | de_para_municipios.csv com as colunas do contrato 5.4 | cidade_origem, uf_origem, cod_ibge, justificativa | cidade_origem, uf_origem, cod_ibge, justificativa | APROVADO |
@@ -241,45 +234,3 @@ Municipios sem populacao estimada. Esperado ausencia permanece nula (plano 14.5)
 Municipios sem PIB per capita. Esperado ausencia permanece nula (plano 14.5), encontrado 1.
 
 5101837 Boa Esperança do Norte/MT
-
-### `CTR-NOME-001` -- ALERTA
-
-Arquivos com o nome fixado em contratos_dados.md secao 4. Esperado 3 arquivo(s), encontrado 0 com o nome do contrato.
-
-pagamentos_pedido.parquet (a silver grava pagamentos.parquet); avaliacoes_pedido.parquet (a silver grava avaliacoes.parquet); geolocalizacao_agregada.parquet (a silver grava geolocalizacao_cep.parquet)
-
-### `CTR-COL-001` -- ALERTA
-
-Colunas do contrato ausentes sem equivalente na silver. Esperado 0, encontrado 5.
-
-4.1 pedidos.flag_entregue; 4.3 produtos.volume_cm3; 4.3 produtos.qtd_fotos; 4.3 produtos.flag_imputado; 4.7 avaliacoes_pedido.flag_tem_comentario
-
-### `CTR-COL-002` -- ALERTA
-
-Colunas do contrato gravadas com outro nome. Esperado 0, encontrado 22.
-
-4.1 pedidos: data_compra -> ts_compra; 4.1 pedidos: data_aprovacao -> ts_aprovacao; 4.1 pedidos: data_envio_transportadora -> ts_envio_transportadora; 4.1 pedidos: data_entrega_cliente -> ts_entrega_cliente; 4.1 pedidos: data_entrega_estimada -> ts_estimativa_entrega; 4.2 itens_pedido: order_item_id -> item_pedido_id; 4.2 itens_pedido: data_limite_envio -> ts_limite_envio; 4.2 itens_pedido: valor_produto -> preco_produto; 4.3 produtos: categoria_pt -> categoria_produto; 4.3 produtos: categoria_en -> categoria_produto_ingles; 4.4 clientes: cidade_origem -> cidade; 4.4 clientes: uf_origem -> uf; 4.5 vendedores: cidade_origem -> cidade; 4.5 vendedores: uf_origem -> uf; 4.6 pagamentos_pedido: qtd_parcelas -> parcelas_tipo_predominante; 4.6 pagamentos_pedido: valor_pago_total -> valor_total_pago; 4.6 pagamentos_pedido: qtd_meios_pagamento -> qtd_metodos_distintos; 4.7 avaliacoes_pedido: nota_avaliacao -> nota_review; 4.7 avaliacoes_pedido: data_avaliacao -> ts_criacao_review; 4.8 geolocalizacao_agregada: latitude -> latitude_mediana; 4.8 geolocalizacao_agregada: longitude -> longitude_mediana; 4.8 geolocalizacao_agregada: qtd_pontos -> qtd_pontos_validos
-
-### `CTR-TIPO-001` -- ALERTA
-
-Tipos conforme o contrato (monetario DECIMAL(12,2), secao 1). Esperado 0, encontrado 6.
-
-4.2 itens_pedido.valor_total_item: DECIMAL(12,2) -> DECIMAL(13,2); 4.6 pagamentos.valor_total_pago: DECIMAL(12,2) -> DECIMAL(38,2); 4.3 produtos.peso_g: DECIMAL(10,2) -> DOUBLE; 4.3 produtos.comprimento_cm: DECIMAL(10,2) -> DOUBLE; 4.8 geolocalizacao_cep.latitude_mediana: DECIMAL(9,6) -> DOUBLE; 4.8 geolocalizacao_cep.longitude_mediana: DECIMAL(9,6) -> DOUBLE
-
-### `CTR-REGRA-001` -- ALERTA
-
-Regra do outlier de frete. Esperado contrato 4.2: valor_frete acima do p99, encontrado implementado: cerca de Tukey, Q3 + 1.5 * IQR (silver_contrato 4).
-
-### `CTR-REGRA-002` -- ALERTA
-
-Desempate do tipo de pagamento predominante. Esperado contrato 4.6: ordem fixa credit_card > boleto > debit_card > voucher, encontrado implementado: ordem alfabetica ascendente de payment_type.
-
-### `CTR-REGRA-003` -- ALERTA
-
-Texto do comentario da avaliacao. Esperado contrato 4.7: o texto do comentario nao e carregado, encontrado implementado: titulo_review e mensagem_review carregados na silver.
-
-### `CTR-CARD-001` -- ALERTA
-
-Cardinalidade do cadastro municipal. Esperado 5570 (contrato secoes 3 e 6.2), encontrado 5571.
-
-o excedente e Boa Esperanca do Norte (5101837/MT), instalado depois de 2017; a dim_geografia precisa decidir se ele entra

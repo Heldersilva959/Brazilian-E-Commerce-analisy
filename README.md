@@ -2,7 +2,7 @@
 
 Trabalho acadêmico de Data Warehouse / BI: integração de vendas, logística e satisfação do cliente do Olist com municípios e indicadores socioeconômicos do IBGE.
 
-O projeto prioriza SQL legível, decisões de negócio documentadas e execução local. Não inclui dashboard, nuvem, Docker, Spark ou Airflow.
+O projeto prioriza SQL legível, decisões de negócio documentadas e execução local. O DW está implementado; o dashboard é a próxima etapa da entrega.
 
 ## Estado atual
 
@@ -11,11 +11,11 @@ Implementação com revisão ao final de cada etapa:
 1. **Bronze: pronta e executada.** Onze tabelas, 1.562.064 linhas, contagem conferida arquivo por arquivo. Ver [`docs/membro1_bronze.md`](docs/membro1_bronze.md).
 2. **Silver: pronta e executada.** Dez tabelas geradas a partir da bronze real, 1.570.435 linhas. Ver [`docs/silver_contrato.md`](docs/silver_contrato.md).
 3. **Integração de municípios: pronta e executada.** Match exato, fallback geográfico e de-para manual; 99,91% dos clientes e 99,94% dos vendedores resolvidos. Ver [`docs/relatorio_match.md`](docs/relatorio_match.md).
-4. **Validação de bronze e silver: pronta e executada.** 121 testes a cada execução. Ver [`docs/validacao_bronze_silver.md`](docs/validacao_bronze_silver.md).
-5. Gold: dimensões e fatos materializadas. Em desenvolvimento.
-6. Qualidade da gold: validações e relatório. Em desenvolvimento.
+4. **Validação de bronze e silver: pronta e executada.** Verificações de dados e do contrato v2 a cada execução. Ver [`docs/validacao_bronze_silver.md`](docs/validacao_bronze_silver.md).
+5. **Gold: implementada e executada.** Duas fatos e seis dimensões, com PKs, FKs, membros desconhecidos e substituição completa do DW. Ver [`docs/gold.md`](docs/gold.md).
+6. **Qualidade da Gold: implementada.** Validação antes da publicação e etapa independente de conferência; resultados em `data/gold/qualidade.md`.
 
-O orquestrador (`src/run_pipeline.py`) já roda de ponta a ponta: as etapas ainda não escritas são anunciadas e puladas, e o pipeline segue. O relatório de qualidade da gold ainda não foi calculado.
+O orquestrador (`src/run_pipeline.py`) executa todas as seis etapas. Etapa obrigatória ausente ou reprovada interrompe a execução.
 
 O levantamento das fontes brutas — contagens, colunas, tipos, vazios, encoding e `sha256` de cada arquivo — está em [`docs/inventario_fontes.md`](docs/inventario_fontes.md).
 
@@ -43,7 +43,7 @@ python -m src.run_pipeline --etapa bronze     # só uma etapa
 python -m src.run_pipeline --ate validacao    # da primeira etapa até essa
 ```
 
-O log traz, por etapa, horário de início, duração, tabelas geradas e contagem de linhas de entrada e de saída. Etapa cujo módulo ainda não foi escrito é anunciada e pulada; erro dentro de uma etapa que existe derruba a execução, com o log dizendo qual etapa quebrou.
+O log traz, por etapa, horário de início, duração, tabelas geradas e contagem de linhas de entrada e de saída. Módulo obrigatório ausente ou erro dentro de uma etapa derruba a execução, com o log dizendo qual etapa quebrou.
 
 Não são usados dados sintéticos ou mocks. Arquivo obrigatório ausente interrompe a execução informando a tabela afetada, o caminho esperado e onde obter o arquivo.
 
@@ -70,7 +70,7 @@ Não são usados dados sintéticos ou mocks. Arquivo obrigatório ausente interr
 └── README.md
 ```
 
-Já existem `src/run_pipeline.py`, `src/bronze/ingest.py`, `src/silver/transform.py`, `src/silver/integracao_municipios.py`, `src/utils/normalizacao.py` e `src/qualidade/validar_camadas.py`. Faltam `src/gold/dimensional.py` e `src/gold/qualidade.py`, que entram na etapa do membro 4.
+Já existem `src/run_pipeline.py`, `src/bronze/ingest.py`, `src/silver/transform.py`, `src/silver/integracao_municipios.py`, `src/utils/normalizacao.py` e `src/qualidade/validar_camadas.py`. A Gold está em `src/gold/dimensional.py`, `src/gold/schema.sql`, `src/gold/carga.sql` e `src/gold/qualidade.py`.
 
 `data/raw/` é versionado no Git; `data/bronze/`, `data/silver/` e `data/gold/` não, porque são reconstruídos a cada execução (contrato §1).
 
@@ -136,21 +136,21 @@ Os indicadores de 2017 serão atributos fixos da geografia para todo o período 
 
 O IBGE Localidades é o cadastro canônico de códigos e nomes, mas não fornece coordenadas municipais. Foi aprovado manter somente os insumos previstos, usando pontos representativos estimados a partir do próprio Olist.
 
-A ordem será:
+A ordem implementada é exato, de-para manual e fallback geográfico (contrato v2). Os métodos são:
 
-1. **Normalização e match exato:** NFKD, remoção de acentos, minúsculas, remoção de pontuação e redução de espaços repetidos. A chave sempre inclui cidade normalizada e UF. Chaves ambíguas não serão aceitas automaticamente.
-2. **Fallback geográfico:** agregar latitude e longitude por prefixo de CEP pela mediana. Estimar pontos representativos municipais apenas com coordenadas de localidades Olist que tiveram match exato com o IBGE. Buscar por Haversine o candidato da mesma UF. Esses pontos são aproximações do Olist, não sedes ou centroides oficiais; municípios sem evidência não terão ponto inventado. Matches do fallback não alimentarão novamente a referência.
-3. **De-para manual:** resolver o resíduo por `de_para_municipios.csv`, versionado e inicialmente apenas com cabeçalho. Não há correspondências inventadas.
+1. **Normalização e match exato:** nome normalizado + UF, incluindo tentativa sem espaços somente quando a chave é única.
+2. **De-para manual:** correções justificadas em `de_para_municipios.csv`, antes da estimativa geográfica.
+3. **Fallback geográfico:** candidato da mesma UF mais próximo do ponto do CEP, até 50 km. Pontos municipais são estimados somente a partir de matches exatos do Olist.
 
-O fallback terá limite de distância e rejeição de ambiguidade. Os valores desses critérios serão definidos e documentados na etapa de integração, com inspeção dos dados reais. Coordenadas inválidas serão sinalizadas e excluídas do cálculo espacial, preservando seus registros de origem. Proximidade não comprova pertencimento ao município, especialmente nas fronteiras municipais.
+O fallback aceita o candidato mais próximo na mesma UF até 50 km, com desempate por código IBGE. Não há margem de rejeição por proximidade entre candidatos; essa limitação está explícita no contrato v2. Coordenadas inválidas serão sinalizadas e excluídas do cálculo espacial, preservando seus registros de origem. Proximidade não comprova pertencimento ao município, especialmente nas fronteiras municipais.
 
 Layout do de-para:
 
 ```csv
-cidade_normalizada,uf,cod_ibge,justificativa
+cidade_origem,uf_origem,cod_ibge,justificativa
 ```
 
-A UF deverá coincidir com a do município de destino. A chave cidade/UF deverá ser única. Cada preenchimento deverá ter justificativa verificável.
+A chave cidade/UF de origem deve ser única e cada preenchimento deve ter justificativa verificável. O de-para pode corrigir uma UF incorreta da origem; essa exceção não se aplica ao fallback geográfico.
 
 A integração atenderá clientes e vendedores. A taxa principal será a proporção de registros de clientes (`customer_id`) mapeados, com contagem por método e lista dos não resolvidos, impressas e persistidas. Não se promete antecipadamente uma taxa mínima. A cobertura dos indicadores socioeconômicos será medida separadamente.
 
@@ -187,7 +187,7 @@ Limiares de faixas de preço, peso, parcelas e porte municipal, assim como a reg
 
 O módulo importa as constantes das camadas que valida — `BRONZE_ESPERADA`, a caixa delimitadora do Brasil, `RAIO_ACEITE_KM`, `contar_registros`, `sha256_arquivo` — em vez de repetir os valores, para que a validação não possa divergir em silêncio da regra validada.
 
-Classificação e desfecho seguem [`docs/plano_qualidade.md`](docs/plano_qualidade.md) §3 e §20: `REPROVADO` derruba o pipeline, mas só depois de o relatório estar gravado. As famílias `CTR-*` apenas reportam — renomear coluna agora quebraria a integração, que já consome os nomes atuais; a decisão é do grupo, numa revisão de contrato.
+Classificação e desfecho seguem [`docs/plano_qualidade.md`](docs/plano_qualidade.md) §3 e §20: `REPROVADO` derruba o pipeline, mas só depois de o relatório estar gravado. A família `CTR-*` valida os onze arquivos do contrato Silver → Gold v2; arquivo, coluna, tipo, nulidade ou grão incorreto reprova a execução. Ver [`docs/contrato_entrada_gold.md`](docs/contrato_entrada_gold.md).
 
 Saídas: [`docs/validacao_bronze_silver.md`](docs/validacao_bronze_silver.md) e `data/silver/validacao_bronze_silver.json`, este para a gold consumir sem reparsear markdown. Ambos são recriados a cada execução.
 
@@ -236,4 +236,4 @@ O pipeline usará `logging` com entradas e saídas por etapa. Erros não serão 
 
 A idempotência será verificada com as mesmas fontes, cache, de-para e dependências: duas execuções deverão manter conteúdos, chaves e totais iguais, sem acumular duplicatas. Isso não exige que o arquivo físico do banco DuckDB tenha bytes idênticos.
 
-As saídas reais, amostras e limitações são apresentadas após cada camada implementada. As da bronze estão em [`docs/membro1_bronze.md`](docs/membro1_bronze.md); a próxima etapa é a silver.
+As saídas e limitações de cada camada estão documentadas em `docs/`; a Gold e sua execução estão em [`docs/gold.md`](docs/gold.md).

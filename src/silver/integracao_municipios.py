@@ -27,16 +27,12 @@ estimativa sobrepor um fato conferido.
 Os centroides municipais sao formados **apenas** com prefixos de CEP
 resolvidos pelo metodo exato, para o fallback nao realimentar o proprio erro.
 
-### Sobre os dois contratos
+### Interface consolidada
 
-`docs/contratos_dados.md` (secao 5.3) e `docs/contrato_entrada_gold.md`
-(secoes 11 a 15) pedem as mesmas informacoes com nomes de arquivo, nomes de
-coluna e vocabulario diferentes -- `municipios_cliente` x `clientes_municipios`,
-`de_para` x `manual`, distancia por par vendedor-cliente x distancia por item.
-Enquanto o grupo nao unifica os dois textos, esta etapa grava as duas familias
-de arquivo a partir do mesmo calculo, cada uma no formato do seu contrato. Os
-numeros sao identicos; muda so a embalagem. A divergencia esta registrada em
-`docs/relatorio_match.md` para ser resolvida numa revisao de contrato.
+`docs/contrato_entrada_gold.md` v2 define os onze arquivos oficiais da Gold.
+As saidas municipios_cliente/municipios_vendedor e distancias_vendedor_cliente
+continuam como auxiliares de auditoria. A distancia por par usa pontos
+municipais; a distancia oficial por item usa CEPs, e os valores nao sao equivalentes.
 
 Execucao:
 
@@ -404,7 +400,7 @@ def resolver_entidade(con: duckdb.DuckDBPyConnection, entidade: str) -> str:
 
 
 def gravar_mapeamentos(con: duckdb.DuckDBPyConnection) -> None:
-    """Grava as duas familias de arquivo pedidas pelos dois contratos."""
+    """Grava a interface Gold v2 e os auxiliares de auditoria."""
     for entidade, chave in (("clientes", "customer_id"), ("vendedores", "seller_id")):
         tabela = f"mapa_{entidade}"
         sufixo = "cliente" if entidade == "clientes" else "vendedor"
@@ -473,7 +469,7 @@ def gravar_mapeamentos(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def gravar_distancias(con: duckdb.DuckDBPyConnection) -> None:
-    """Distancias vendedor-cliente, nos dois graos que os contratos pedem."""
+    """Distancia oficial por item (CEP) e auxiliar por par (municipio)."""
     arq = _requeridos()
 
     # Par (seller_id, customer_id) -- contrato de dados, secao 5.3: Haversine
@@ -762,23 +758,16 @@ def _escrever_relatorio_match(dados: dict, nao_resolvidos: list, de_para: list) 
 
     partes += [
         "",
-        "## Divergência entre os dois contratos",
+        "## Interface Silver → Gold v2",
         "",
-        "`docs/contratos_dados.md` (§5.3) e `docs/contrato_entrada_gold.md` (§11–15)",
-        "pedem as mesmas informações com nomes diferentes. Enquanto o grupo não",
-        "unifica os textos, a etapa grava as duas famílias a partir do mesmo cálculo:",
+        "O contrato oficial está em `docs/contrato_entrada_gold.md`.",
+        "A Gold usa `clientes_municipios`, `vendedores_municipios`,",
+        "`geografia_integrada` e `distancias_itens` como saídas da integração.",
+        "Os demais Parquets desta etapa são auxiliares de auditoria.",
         "",
-        "| §5.3 (contrato de dados) | §11–15 (entrada da gold) |",
-        "|---|---|",
-        "| `municipios_cliente.parquet` | `clientes_municipios.parquet` |",
-        "| `municipios_vendedor.parquet` | `vendedores_municipios.parquet` |",
-        "| `distancias_vendedor_cliente.parquet` (par, centroides) | "
-        "`distancias_itens.parquet` (item, medianas de CEP) |",
-        "| método `de_para` | método `manual` |",
-        "| — | `geografia_integrada.parquet` |",
-        "",
-        "Os números são idênticos; muda a embalagem. Vale unificar numa revisão",
-        "de contrato antes da entrega final.",
+        "Os mapeamentos auxiliares usam `de_para`, equivalente a `manual` na interface.",
+        "A distância por par usa pontos municipais; a distância por item usa CEPs.",
+        "Essas distâncias não são equivalentes. A medida oficial da Gold é a distância por item.",
         "",
     ]
 

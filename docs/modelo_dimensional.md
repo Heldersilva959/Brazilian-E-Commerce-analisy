@@ -1,5 +1,7 @@
 # Modelo dimensional do Data Warehouse
 
+> Entradas físicas e aliases: [contrato Silver → Gold v2](contrato_entrada_gold.md). Os nomes deste modelo são destinos Gold, não renomeações obrigatórias da Silver.
+
 ## 1. Objetivo
 
 Este documento descreve o modelo dimensional da camada Gold do Data Warehouse de e-commerce brasileiro.
@@ -14,7 +16,7 @@ O modelo permitirá analisar:
 - Recompra.
 - Relação entre vendas e indicadores socioeconômicos municipais.
 
-A camada Gold será materializada em:
+A camada Gold é materializada por `src/gold/dimensional.py`, com DDL explícito em `src/gold/schema.sql` e carga em `src/gold/carga.sql`, em:
 
 ```text
 data/gold/dw.duckdb
@@ -73,7 +75,7 @@ Dessa forma, executar novamente o pipeline com as mesmas fontes produzirá as me
 
 ### 3.2 Registro técnico desconhecido
 
-As dimensões terão um registro técnico com chave `0` quando a relação puder estar ausente ou não resolvida.
+Todas as seis dimensões têm exatamente um registro técnico com chave `0`. Suas chaves naturais são nulas; atributos numéricos e flags desconhecidas permanecem nulos. Atributos textuais de apresentação recebem `nao_informado` (porte municipal: `Não informado`). Referência natural não nula inexistente reprova a carga; ausência legítima usa SK 0.
 
 Exemplos:
 
@@ -172,11 +174,11 @@ product_id
 | `product_id` | VARCHAR | Identificador natural do produto |
 | `categoria_pt` | VARCHAR | Categoria original em português |
 | `categoria_en` | VARCHAR | Tradução da categoria para inglês |
-| `peso_gramas` | DECIMAL | Peso do produto em gramas |
-| `comprimento_cm` | DECIMAL | Comprimento do produto |
-| `altura_cm` | DECIMAL | Altura do produto |
-| `largura_cm` | DECIMAL | Largura do produto |
-| `volume_cm3` | DECIMAL | Volume calculado do produto |
+| `peso_gramas` | DOUBLE | Peso do produto em gramas |
+| `comprimento_cm` | DOUBLE | Comprimento do produto |
+| `altura_cm` | DOUBLE | Altura do produto |
+| `largura_cm` | DOUBLE | Largura do produto |
+| `volume_cm3` | DOUBLE | Volume calculado do produto |
 | `faixa_peso` | VARCHAR | Classificação do peso |
 | `peso_imputado` | BOOLEAN | Indica se o peso foi imputado |
 | `dimensoes_imputadas` | BOOLEAN | Indica se alguma dimensão foi imputada |
@@ -295,7 +297,7 @@ O código IBGE será armazenado como texto para preservar seus sete dígitos.
 | `nome_uf` | VARCHAR | Nome da Unidade da Federação |
 | `regiao` | VARCHAR | Região brasileira |
 | `populacao_estimada` | BIGINT | População estimada em 2017 |
-| `pib_per_capita` | DECIMAL | PIB per capita em reais em 2017 |
+| `pib_per_capita` | DECIMAL(18,2) | PIB per capita em reais em 2017 |
 | `porte_municipio` | VARCHAR | Classificação por população |
 | `ano_referencia_indicadores` | INTEGER | Ano dos indicadores socioeconômicos |
 
@@ -311,15 +313,13 @@ Os indicadores socioeconômicos representam um retrato de 2017. Eles não devem 
 
 ### 8.6 Porte do município
 
-O porte será derivado da população estimada. Os limites deverão ser definidos pelo grupo antes da implementação e registrados no código e no relatório.
-
-Uma proposta é:
+O porte segue os limites implementados na Silver e consolidados no contrato v2:
 
 | Porte | População |
 | --- | ---: |
-| Pequeno | Até 20.000 |
-| Médio | De 20.001 até 100.000 |
-| Grande | Acima de 100.000 |
+| Pequeno | Menos de 50.000 |
+| Médio | De 50.000 até 500.000 |
+| Grande | Acima de 500.000 |
 | Não informado | População ausente |
 
 Essas faixas são uma classificação analítica do projeto e deverão ser apresentadas dessa forma.
@@ -334,14 +334,14 @@ dim_pagamento
 
 ### 9.2 Grão
 
-Uma linha para cada combinação de tipo predominante, quantidade de parcelas e faixa de parcelas.
+Uma linha para cada combinação de tipo predominante e quantidade de parcelas. A faixa é derivada deterministicamente dessa quantidade e não amplia o grão. A combinação inteiramente ausente usa SK 0; combinações parcialmente preenchidas são preservadas.
 
 ### 9.3 Chave natural
 
 Chave composta:
 
 ```text
-tipo_pagamento + quantidade_parcelas + faixa_parcelas
+tipo_pagamento + quantidade_parcelas
 ```
 
 ### 9.4 Estrutura
@@ -397,13 +397,13 @@ O grão deve permanecer único depois de todos os joins.
 | `sk_pagamento` | INTEGER | FK para `dim_pagamento` |
 | `order_id` | VARCHAR | Dimensão degenerada do pedido |
 | `order_item_id` | INTEGER | Identificador do item dentro do pedido |
-| `valor_produto` | DECIMAL | Preço do produto |
-| `valor_frete` | DECIMAL | Valor do frete do item |
-| `valor_total_item` | DECIMAL | Produto mais frete |
-| `dias_ate_entrega` | INTEGER | Dias entre compra e entrega |
-| `dias_atraso` | INTEGER | Diferença entre entrega real e estimada |
+| `valor_produto` | DECIMAL(18,2) | Preço do produto |
+| `valor_frete` | DECIMAL(18,2) | Valor do frete do item |
+| `valor_total_item` | DECIMAL(18,2) | Produto mais frete |
+| `dias_ate_entrega` | BIGINT | Dias entre compra e entrega |
+| `dias_atraso` | BIGINT | Diferença entre entrega real e estimada |
 | `flag_atraso` | BOOLEAN | Indica entrega após a data estimada |
-| `distancia_km` | DECIMAL | Distância aproximada vendedor–cliente |
+| `distancia_km` | DOUBLE | Distância aproximada vendedor–cliente |
 | `nota_avaliacao` | INTEGER | Nota da avaliação do pedido |
 | `flag_outlier_frete` | BOOLEAN | Indica frete classificado como outlier |
 
@@ -468,13 +468,13 @@ Pedidos sem itens ou sem avaliação também serão preservados.
 | `sk_pagamento` | INTEGER | FK para `dim_pagamento` |
 | `order_id` | VARCHAR | Dimensão degenerada e identificador do grão |
 | `status_pedido` | VARCHAR | Situação do pedido |
-| `quantidade_itens` | INTEGER | Número de itens no pedido |
-| `quantidade_vendedores` | INTEGER | Número de vendedores distintos |
-| `valor_produtos` | DECIMAL | Soma dos preços dos itens |
-| `valor_frete` | DECIMAL | Soma dos fretes dos itens |
-| `valor_total_pedido` | DECIMAL | Produtos mais frete |
-| `dias_ate_entrega` | INTEGER | Dias entre compra e entrega |
-| `dias_atraso` | INTEGER | Diferença entre entrega real e estimada |
+| `quantidade_itens` | BIGINT | Número de itens no pedido |
+| `quantidade_vendedores` | BIGINT | Número de vendedores distintos |
+| `valor_produtos` | DECIMAL(18,2) | Soma dos preços dos itens |
+| `valor_frete` | DECIMAL(18,2) | Soma dos fretes dos itens |
+| `valor_total_pedido` | DECIMAL(18,2) | Produtos mais frete |
+| `dias_ate_entrega` | BIGINT | Dias entre compra e entrega |
+| `dias_atraso` | BIGINT | Diferença entre entrega real e estimada |
 | `flag_atraso` | BOOLEAN | Indica atraso |
 | `nota_avaliacao` | INTEGER | Nota consolidada do pedido |
 | `flag_entregue` | BOOLEAN | Indica se o pedido foi entregue |
@@ -618,17 +618,29 @@ Quantidade da fato_pedido
 quantidade de order_id únicos na tabela Silver de pedidos
 ```
 
-## 16. Decisões pendentes
+## 16. Classificações implementadas
 
-Antes da implementação, o grupo ainda precisa aprovar:
+Faixas analíticas fixas do projeto, sem pretensão de representar uma classificação oficial:
 
-- Limites das faixas de peso.
-- Limites do porte municipal.
-- Limites das faixas de preço.
-- Limites das faixas de parcelas.
-- Regra para identificar outliers de frete.
-- Status de pedido incluídos no indicador de valor vendido.
-- Ordem de desempate entre tipos de pagamento.
-- Forma de representar a chave técnica da dimensão tempo.
+| Campo | Regra |
+| --- | --- |
+| `faixa_peso` | `ate_1kg` até 1.000 g; `1_a_5kg` acima de 1.000 até 5.000 g; `5_a_20kg` acima de 5.000 até 20.000 g; `acima_20kg` acima; nulo → `nao_informado` |
+| `faixa_parcelas` | `1_parcela`; `2_a_3`; `4_a_6`; `7_a_12`; `acima_12`; nulo ou menor que 1 → `nao_informado`, preservando a quantidade recebida |
 
-Essas decisões devem ser registradas antes da carga Gold para que os resultados sejam reprodutíveis.
+A semana usa numeração ISO e o dia da semana vai de 1 (segunda-feira) a 7 (domingo). SKs de tempo são sequenciais pela data; SK 0 tem data nula, nunca uma data fictícia.
+
+## 17. Campos adicionais implementados
+
+A fato de pedidos também guarda `quantidade_produtos`, `valor_total_pago` (auditoria, não receita), `flag_entrega_ausente` e `metodo_match_municipio`. A fato de itens inclui `faixa_preco`, `flag_distancia_calculada` e `motivo_distancia_ausente`. Geografia inclui coordenadas representativas municipais; produto inclui a flag de categoria sem tradução.
+
+As doze FKs das fatos são NOT NULL, declaradas no DDL e indexadas. PKs e unicidade das chaves naturais são declaradas; a combinação de pagamento com nulos também é verificada pela qualidade, pois UNIQUE sozinho permite nulos repetidos.
+
+## 18. Publicação e reprodutibilidade
+
+Carga completa SCD Tipo 1: validar os onze arquivos, copiar suas entradas para o banco de construção, conferir referências, criar dimensões, fatos e índices em transação, validar, fechar e substituir `dw.duckdb` no mesmo volume. Tabelas de estágio são removidas antes da publicação: o DW contém somente as oito tabelas dimensionais. Uma falha antes da substituição preserva o banco publicado. Se um consumidor impedir a substituição no Windows, fechar a conexão e repetir.
+
+Mesmas entradas produzem as mesmas SKs e linhas. Novas chaves naturais podem renumerar SKs entre cargas completas; por isso o DW inteiro é substituído junto. Não é carga incremental nem mantém histórico Tipo 2.
+
+Pedidos sem itens têm contagens e somas zero. Se existem itens mas algum componente de uma soma é nulo, o total correspondente fica nulo: a Gold não apresenta uma soma parcial como total conhecido.
+
+A validação ocorre antes da publicação e pode ser repetida com `python -m src.run_pipeline --etapa qualidade`. Resultados ficam em `data/gold/qualidade.md` e `.json`. A reprodução é aferida por SHA-256 de todas as linhas ordenadas por PK, incluindo os tipos, e não pelos bytes físicos do arquivo DuckDB.

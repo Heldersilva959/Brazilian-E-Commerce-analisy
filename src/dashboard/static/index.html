@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Observatório • E-commerce brasileiro</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="/" aria-label="Observatório início"><span class="brand-mark">o<span>•</span></span><span>observatório<small>E-COMMERCE BRASILEIRO</small></span></a>
+  <div class="nav-label">PERSPECTIVAS</div>
+  <nav aria-label="Perspectivas de análise">
+    <button class="nav-item active" data-panel="comercial" aria-current="page"><span>01</span> Comercial <b>↗</b></button>
+    <button class="nav-item" data-panel="logistica"><span>02</span> Logística <b>↗</b></button>
+    <button class="nav-item" data-panel="satisfacao"><span>03</span> Satisfação <b>↗</b></button>
+  </nav>
+  <div class="sidebar-bottom"><span class="source-dot"></span> Fonte única: Data Warehouse<p>Olist · IBGE · SIDRA<br>Dados integrados para análise.</p><div class="project">PROJETO ACADÊMICO / BI</div></div>
+</aside>
+<main>
+  <div class="topline"><span>ANÁLISE DE DESEMPENHO</span><span class="period" id="period">Carregando período…</span></div>
+  <header><div><div class="eyebrow" id="eyebrow">01 / VISÃO COMERCIAL</div><h1 id="title">O ritmo das vendas.</h1><p id="objective">Entenda a evolução do valor entregue e a composição das vendas.</p></div><button class="download" id="download" disabled>↓ Exportar dados</button></header>
+  <form class="filters" id="filters">
+    <label>Compra a partir de<input type="date" id="inicio" required></label>
+    <label>Compra até<input type="date" id="fim" required></label>
+    <label class="uf-label">UF do cliente<select id="uf"><option value="Todas">Todas as UFs</option></select></label>
+    <button type="submit" id="apply">Aplicar filtros <span>→</span></button><button type="button" class="reset" id="reset">Limpar</button>
+  </form>
+  <div id="status" role="status" aria-live="polite">Carregando indicadores do DW…</div>
+  <section id="content" aria-label="Resultados" hidden>
+    <div class="scope"><span id="scope"></span><span id="selection"></span></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="chart-grid" id="charts"></div>
+    <div class="method"><span>COMO LER</span><p id="method"></p></div>
+  </section>
+  <footer><span>Observatório de e-commerce brasileiro</span><span>Valores em R$ · Datas de compra · Indicadores municipais de 2017</span></footer>
+</main>
+</body></html>

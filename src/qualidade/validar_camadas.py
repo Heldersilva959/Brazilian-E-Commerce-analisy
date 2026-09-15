@@ -17,7 +17,7 @@ Familias de teste:
     BRZ-*   bronze: copia literal, linhagem, contagem contra a origem
     SLV-*   silver: PK, orfao, grao preservado, reconciliacao, regra de negocio
     INT-*   integracao municipal: metodo de match, raio, unicidade do mapeamento
-    CTR-*   conformidade com docs/contratos_dados.md (so reporta, nao corrige)
+    CTR-*   contrato_entrada_gold.md v2: violacoes reprovam a carga
     REP-*   reprodutibilidade: etapa ausente, artefato orfao, de-para
 
 Classificacao e desfecho seguem `docs/plano_qualidade.md` secoes 3 e 20:
@@ -45,6 +45,7 @@ import duckdb
 
 from ..bronze import ingest
 from ..silver import transform
+from ..silver.contrato_gold import verificar
 
 RAIZ = Path(__file__).resolve().parents[2]
 DIR_BRONZE = RAIZ / "data" / "bronze"
@@ -161,112 +162,6 @@ GRAO_PRESERVADO: tuple[tuple[str, str, bool], ...] = (
 # --------------------------------------------------------------------------
 # Contrato de dados -- esperado por docs/contratos_dados.md secao 4
 # --------------------------------------------------------------------------
-
-# Nome de arquivo fixado no contrato -> nome que a silver realmente grava.
-CONTRATO_ARQUIVOS: dict[str, str] = {
-    "pagamentos_pedido.parquet": "pagamentos.parquet",
-    "avaliacoes_pedido.parquet": "avaliacoes.parquet",
-    "geolocalizacao_agregada.parquet": "geolocalizacao_cep.parquet",
-}
-
-# Coluna do contrato -> coluna equivalente na silver, ou None quando a silver
-# nao produz nada equivalente. Secoes 4.1 a 4.9.
-CONTRATO_COLUNAS: dict[str, tuple[str, dict[str, str | None]]] = {
-    "4.1 pedidos": (
-        "pedidos",
-        {
-            "data_compra": "ts_compra",
-            "data_aprovacao": "ts_aprovacao",
-            "data_envio_transportadora": "ts_envio_transportadora",
-            "data_entrega_cliente": "ts_entrega_cliente",
-            "data_entrega_estimada": "ts_estimativa_entrega",
-            "flag_entregue": None,
-        },
-    ),
-    "4.2 itens_pedido": (
-        "itens_pedido",
-        {
-            "order_item_id": "item_pedido_id",
-            "data_limite_envio": "ts_limite_envio",
-            "valor_produto": "preco_produto",
-        },
-    ),
-    "4.3 produtos": (
-        "produtos",
-        {
-            "categoria_pt": "categoria_produto",
-            "categoria_en": "categoria_produto_ingles",
-            "volume_cm3": None,
-            "qtd_fotos": None,
-            "flag_imputado": None,
-        },
-    ),
-    "4.4 clientes": (
-        "clientes",
-        {"cidade_origem": "cidade", "uf_origem": "uf"},
-    ),
-    "4.5 vendedores": (
-        "vendedores",
-        {"cidade_origem": "cidade", "uf_origem": "uf"},
-    ),
-    "4.6 pagamentos_pedido": (
-        "pagamentos",
-        {
-            "qtd_parcelas": "parcelas_tipo_predominante",
-            "valor_pago_total": "valor_total_pago",
-            "qtd_meios_pagamento": "qtd_metodos_distintos",
-        },
-    ),
-    "4.7 avaliacoes_pedido": (
-        "avaliacoes",
-        {
-            "nota_avaliacao": "nota_review",
-            "data_avaliacao": "ts_criacao_review",
-            "flag_tem_comentario": None,
-        },
-    ),
-    "4.8 geolocalizacao_agregada": (
-        "geolocalizacao_cep",
-        {
-            "latitude": "latitude_mediana",
-            "longitude": "longitude_mediana",
-            "qtd_pontos": "qtd_pontos_validos",
-        },
-    ),
-}
-
-# Tipo fixado pelo contrato -> tipo que a silver gravou. Secao 1 (monetario
-# sempre DECIMAL(12,2), distancia DECIMAL(10,2)) e secoes 4.3 e 4.8.
-CONTRATO_TIPOS: tuple[tuple[str, str, str, str], ...] = (
-    ("itens_pedido", "valor_total_item", "DECIMAL(12,2)", "4.2"),
-    ("pagamentos", "valor_total_pago", "DECIMAL(12,2)", "4.6"),
-    ("produtos", "peso_g", "DECIMAL(10,2)", "4.3"),
-    ("produtos", "comprimento_cm", "DECIMAL(10,2)", "4.3"),
-    ("geolocalizacao_cep", "latitude_mediana", "DECIMAL(9,6)", "4.8"),
-    ("geolocalizacao_cep", "longitude_mediana", "DECIMAL(9,6)", "4.8"),
-)
-
-# Regras onde a implementacao e o contrato divergem no metodo, nao no nome.
-CONTRATO_REGRAS: tuple[tuple[str, str, str, str], ...] = (
-    (
-        "CTR-REGRA-001",
-        "Regra do outlier de frete",
-        "contrato 4.2: valor_frete acima do p99",
-        "implementado: cerca de Tukey, Q3 + 1.5 * IQR (silver_contrato 4)",
-    ),
-    (
-        "CTR-REGRA-002",
-        "Desempate do tipo de pagamento predominante",
-        "contrato 4.6: ordem fixa credit_card > boleto > debit_card > voucher",
-        "implementado: ordem alfabetica ascendente de payment_type",
-    ),
-    (
-        "CTR-REGRA-003",
-        "Texto do comentario da avaliacao",
-        "contrato 4.7: o texto do comentario nao e carregado",
-        "implementado: titulo_review e mensagem_review carregados na silver",
-    ),
-)
 
 VOCABULARIO_MATCH = ("exato", "geografico", "de_para", "nao_resolvido")
 
@@ -1297,100 +1192,14 @@ def _validar_cobertura_socioeconomica(val: Validador) -> None:
 
 
 def validar_contrato(val: Validador) -> None:
-    """Diverge do contrato onde a implementacao seguiu outro caminho.
-
-    Por decisao do grupo estes testes so reportam: renomear coluna agora
-    quebraria a integracao municipal, que ja consome os nomes atuais. O valor
-    esta em a gold descobrir a divergencia aqui, e nao no meio da carga
-    dimensional.
-    """
-    faltando = [
-        f"{contrato} (a silver grava {real})"
-        for contrato, real in CONTRATO_ARQUIVOS.items()
-        if not (DIR_SILVER / contrato).exists()
-    ]
+    """Contrato v2: violacoes de interface reprovam a entrada da Gold."""
+    erros = verificar(val.con, DIR_SILVER)
     val.registrar(
-        "CTR-NOME-001",
-        "Contrato de dados",
-        "Arquivos com o nome fixado em contratos_dados.md secao 4",
-        f"{len(CONTRATO_ARQUIVOS)} arquivo(s)",
-        f"{len(CONTRATO_ARQUIVOS) - len(faltando)} com o nome do contrato",
-        APROVADO if not faltando else ALERTA,
-        "; ".join(faltando),
+        "CTR-INTERFACE-001", "Contrato Silver -> Gold",
+        "Onze entradas: arquivos, tipos exatos, nulidade e grao",
+        0, len(erros), REPROVADO if erros else APROVADO,
+        "; ".join(erros),
     )
-
-    renomeadas: list[str] = []
-    ausentes: list[str] = []
-    for secao, (tabela, mapa) in CONTRATO_COLUNAS.items():
-        view = f"slv_{tabela}"
-        if view not in val.disponivel:
-            continue
-        colunas = _colunas(val.con, view)
-        for coluna_contrato, coluna_real in mapa.items():
-            if coluna_contrato in colunas:
-                continue
-            if coluna_real is None:
-                ausentes.append(f"{secao}.{coluna_contrato}")
-            else:
-                renomeadas.append(f"{secao}: {coluna_contrato} -> {coluna_real}")
-
-    val.registrar(
-        "CTR-COL-001",
-        "Contrato de dados",
-        "Colunas do contrato ausentes sem equivalente na silver",
-        0,
-        len(ausentes),
-        APROVADO if not ausentes else ALERTA,
-        "; ".join(ausentes),
-    )
-    val.registrar(
-        "CTR-COL-002",
-        "Contrato de dados",
-        "Colunas do contrato gravadas com outro nome",
-        0,
-        len(renomeadas),
-        APROVADO if not renomeadas else ALERTA,
-        "; ".join(renomeadas),
-    )
-
-    divergentes: list[str] = []
-    for tabela, coluna, tipo_contrato, secao in CONTRATO_TIPOS:
-        view = f"slv_{tabela}"
-        if view not in val.disponivel:
-            continue
-        colunas = _colunas(val.con, view)
-        real = colunas.get(coluna)
-        if real is None:
-            continue
-        if real.replace(" ", "").upper() != tipo_contrato.replace(" ", "").upper():
-            divergentes.append(f"{secao} {tabela}.{coluna}: {tipo_contrato} -> {real}")
-    val.registrar(
-        "CTR-TIPO-001",
-        "Contrato de dados",
-        "Tipos conforme o contrato (monetario DECIMAL(12,2), secao 1)",
-        0,
-        len(divergentes),
-        APROVADO if not divergentes else ALERTA,
-        "; ".join(divergentes),
-    )
-
-    for id_, descricao, esperado, encontrado in CONTRATO_REGRAS:
-        val.registrar(
-            id_, "Contrato de dados", descricao, esperado, encontrado, ALERTA
-        )
-
-    if "slv_municipios" in val.disponivel:
-        municipios = val.contar("select count(*) from slv_municipios")
-        val.registrar(
-            "CTR-CARD-001",
-            "Contrato de dados",
-            "Cardinalidade do cadastro municipal",
-            "5570 (contrato secoes 3 e 6.2)",
-            municipios,
-            APROVADO if municipios == 5570 else ALERTA,
-            "o excedente e Boa Esperanca do Norte (5101837/MT), instalado depois de "
-            "2017; a dim_geografia precisa decidir se ele entra",
-        )
 
 
 # --------------------------------------------------------------------------

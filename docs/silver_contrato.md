@@ -1,15 +1,8 @@
 # Contrato da camada Silver — Membro 2
 
-Documentação própria do responsável pela Silver, para revisão do grupo em
-`docs/contratos_dados.md`. Escrita antes da bronze existir, a partir dos
-cabeçalhos e valores reais dos nove CSVs em `data/raw/olist/` (inspecionados
-diretamente com DuckDB) — nenhum dado fictício foi criado para antecipar a
-etapa.
+A interface oficial é o [contrato Silver → Gold v2](contrato_entrada_gold.md). Este documento detalha transformações e preserva resultados históricos da execução anterior; não define uma interface concorrente.
 
-`src/silver/transform.py` implementa o que está aqui. A bronze do Membro 1
-(`src/bronze/ingest.py`, contrato em `docs/membro1_bronze.md`) já existe e o
-módulo foi executado contra `data/bronze/*.parquet` de verdade — os resultados
-estão na seção 10, que substitui a validação simulada que existia aqui antes.
+Na revisão v2, dinheiro foi padronizado para DECIMAL(18,2), inclusive somas; preço nulo passou a ter faixa `nao_informado`; flags de imputação indicam substituição efetiva, com suporte mínimo de cinco valores por medida separadamente.
 
 ## 1. Contrato de entrada esperado da bronze
 
@@ -89,7 +82,7 @@ Regras (dados reais de `olist_orders_dataset.csv`, 99.441 linhas):
 ## 4. `itens_pedido`
 
 Renomeia `order_item_id`→`item_pedido_id`, `price`→`preco_produto`,
-`freight_value`→`valor_frete`, ambos `DECIMAL(12,2)`.
+`freight_value`→`valor_frete`, ambos `DECIMAL(18,2)`.
 `valor_total_item = preco_produto + valor_frete` (regra do README: total do
 item é preço + frete, sem repetir valores de pagamento neste grão).
 
@@ -257,16 +250,9 @@ e conferidas linha a linha contra os números levantados nas seções acima:
   fora da caixa), não a união usada pela regra real do
   `flag_coordenada_invalida` (seção 9).
 
-## 11. Pendências que dependem de decisão conjunta / de outros membros
+## 11. Responsabilidades consolidadas
 
-- `distancia_km` (vendedor–cliente) depende do ponto representativo municipal
-  que o Membro 3 só calcula depois de receber `geolocalizacao_cep` — por isso
-  não está nesta camada; fica para a integração/gold.
-- ~~Limiar de "porte municipal" é do Membro 3/4, não tratado aqui.~~ Resolvido:
-  o contrato de dados §4.9 coloca `porte_municipio` nesta camada, e a regra
-  implementada é a de lá — ver seção 12.
-- O limite mínimo de 5 observações para a mediana de categoria de produto é
-  uma escolha minha, sujeita a revisão do grupo na reunião de alinhamento.
+Distância por CEP é produzida pela integração em `distancias_itens`. Volume e faixas de peso/parcelas são derivados da Gold. O suporte mínimo para imputação é cinco observações por medida na categoria. Ver contrato v2 para nomes físicos e regras completas.
 
 ## 12. `municipios` — cadastro municipal canônico
 

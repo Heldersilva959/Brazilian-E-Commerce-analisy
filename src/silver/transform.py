@@ -156,8 +156,8 @@ def transformar_itens_pedido(con: duckdb.DuckDBPyConnection) -> Path:
                 product_id,
                 seller_id,
                 cast(nullif(trim(shipping_limit_date), '') as timestamp) as ts_limite_envio,
-                cast(nullif(trim(price), '') as decimal(12, 2)) as preco_produto,
-                cast(nullif(trim(freight_value), '') as decimal(12, 2)) as valor_frete
+                cast(nullif(trim(price), '') as decimal(18, 2)) as preco_produto,
+                cast(nullif(trim(freight_value), '') as decimal(18, 2)) as valor_frete
             from read_parquet('{arquivos["itens_pedido"].as_posix()}')
         ),
         cercas as (
@@ -174,8 +174,9 @@ def transformar_itens_pedido(con: duckdb.DuckDBPyConnection) -> Path:
             b.ts_limite_envio,
             b.preco_produto,
             b.valor_frete,
-            (b.preco_produto + b.valor_frete) as valor_total_item,
+            cast(b.preco_produto + b.valor_frete as decimal(18, 2)) as valor_total_item,
             case
+                when b.preco_produto is null then 'nao_informado'
                 when b.preco_produto <= 39.90 then 'baixo'
                 when b.preco_produto <= 74.99 then 'medio_baixo'
                 when b.preco_produto <= 134.90 then 'medio_alto'
@@ -197,7 +198,7 @@ def transformar_pagamentos(con: duckdb.DuckDBPyConnection) -> Path:
                 order_id,
                 payment_type,
                 cast(nullif(trim(payment_installments), '') as integer) as payment_installments,
-                cast(nullif(trim(payment_value), '') as decimal(12, 2)) as payment_value
+                cast(nullif(trim(payment_value), '') as decimal(18, 2)) as payment_value
             from read_parquet('{arquivos["pagamentos"].as_posix()}')
         ),
         por_tipo as (
@@ -224,7 +225,7 @@ def transformar_pagamentos(con: duckdb.DuckDBPyConnection) -> Path:
         agregado_pedido as (
             select
                 order_id,
-                sum(payment_value) as valor_total_pago,
+                cast(sum(payment_value) as decimal(18, 2)) as valor_total_pago,
                 count(*) as qtd_transacoes,
                 count(distinct payment_type) as qtd_metodos_distintos
             from base
@@ -316,7 +317,9 @@ def transformar_produtos(con: duckdb.DuckDBPyConnection) -> Path:
                 categoria_produto,
                 count(peso_g) as n_peso,
                 median(peso_g) as mediana_peso_g,
-                count(comprimento_cm) as n_dim,
+                count(comprimento_cm) as n_comprimento,
+                count(altura_cm) as n_altura,
+                count(largura_cm) as n_largura,
                 median(comprimento_cm) as mediana_comprimento_cm,
                 median(altura_cm) as mediana_altura_cm,
                 median(largura_cm) as mediana_largura_cm
@@ -336,18 +339,20 @@ def transformar_produtos(con: duckdb.DuckDBPyConnection) -> Path:
             ) as peso_g,
             coalesce(
                 b.comprimento_cm,
-                case when m.n_dim >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_comprimento_cm end
+                case when m.n_comprimento >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_comprimento_cm end
             ) as comprimento_cm,
             coalesce(
                 b.altura_cm,
-                case when m.n_dim >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_altura_cm end
+                case when m.n_altura >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_altura_cm end
             ) as altura_cm,
             coalesce(
                 b.largura_cm,
-                case when m.n_dim >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_largura_cm end
+                case when m.n_largura >= {MIN_OBS_MEDIANA_CATEGORIA} then m.mediana_largura_cm end
             ) as largura_cm,
-            (b.peso_g is null) as flag_peso_imputado,
-            (b.comprimento_cm is null or b.altura_cm is null or b.largura_cm is null)
+            (b.peso_g is null and m.n_peso >= {MIN_OBS_MEDIANA_CATEGORIA}) as flag_peso_imputado,
+            ((b.comprimento_cm is null and m.n_comprimento >= {MIN_OBS_MEDIANA_CATEGORIA})
+             or (b.altura_cm is null and m.n_altura >= {MIN_OBS_MEDIANA_CATEGORIA})
+             or (b.largura_cm is null and m.n_largura >= {MIN_OBS_MEDIANA_CATEGORIA}))
                 as flag_dimensoes_imputadas
         from base b
         left join traducao t on t.categoria_produto = b.categoria_produto

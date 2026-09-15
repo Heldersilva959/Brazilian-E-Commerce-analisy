@@ -129,20 +129,14 @@ Taxa global de resolução: **99,94%**
 | cliente | pinheiros | SP | 1 |
 | cliente | sao sebastiao da serra | SP | 1 |
 
-## Divergência entre os dois contratos
+## Interface Silver → Gold v2
 
-`docs/contratos_dados.md` (§5.3) e `docs/contrato_entrada_gold.md` (§11–15)
-pedem as mesmas informações com nomes diferentes. Enquanto o grupo não
-unifica os textos, a etapa grava as duas famílias a partir do mesmo cálculo:
+O contrato oficial está em `docs/contrato_entrada_gold.md`.
+A Gold usa `clientes_municipios`, `vendedores_municipios`,
+`geografia_integrada` e `distancias_itens` como saídas da integração.
+Os demais Parquets desta etapa são auxiliares de auditoria.
 
-| §5.3 (contrato de dados) | §11–15 (entrada da gold) |
-|---|---|
-| `municipios_cliente.parquet` | `clientes_municipios.parquet` |
-| `municipios_vendedor.parquet` | `vendedores_municipios.parquet` |
-| `distancias_vendedor_cliente.parquet` (par, centroides) | `distancias_itens.parquet` (item, medianas de CEP) |
-| método `de_para` | método `manual` |
-| — | `geografia_integrada.parquet` |
-
-Os números são idênticos; muda a embalagem. Vale unificar numa revisão
-de contrato antes da entrega final.
+Os mapeamentos auxiliares usam `de_para`, equivalente a `manual` na interface.
+A distância por par usa pontos municipais; a distância por item usa CEPs.
+Essas distâncias não são equivalentes. A medida oficial da Gold é a distância por item.
 

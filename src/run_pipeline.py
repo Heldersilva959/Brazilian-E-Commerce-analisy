@@ -5,11 +5,8 @@ Executa as etapas na ordem bronze -> silver -> integracao -> validacao -> gold
 Cada etapa mora no modulo do seu responsavel; este arquivo so chama, cronometra
 e registra o que saiu.
 
-As etapas sao desenvolvidas em paralelo pelos quatro membros, entao o pipeline
-precisa rodar com as seguintes ainda ausentes: etapa cujo modulo nao existe e
-anunciada e pulada, e a execucao segue. Isso vale apenas para o modulo nao
-existir -- erro dentro de uma etapa que existe sobe e derruba o pipeline, como
-tem de ser.
+Todas as etapas sao obrigatorias. Modulo ausente ou erro de execucao
+interrompe o pipeline, sem anunciar uma carga incompleta como concluida.
 
 Uso:
 
@@ -141,15 +138,8 @@ def resolver_entrada(modulo) -> tuple[str, object]:
 
 
 def executar_etapa(etapa: Etapa) -> ResultadoEtapa:
-    # find_spec separa as duas situacoes que um ModuleNotFoundError misturaria:
-    # o modulo da etapa ainda nao foi escrito (pula) ou o modulo existe e uma
-    # dependencia dele falta (erro de verdade, que precisa aparecer).
     if importlib.util.find_spec(etapa.modulo) is None:
-        logger.warning(
-            "etapa %s (%s): modulo %s ainda nao existe -- etapa pulada, o pipeline segue",
-            etapa.nome, etapa.dono, etapa.modulo,
-        )
-        return ResultadoEtapa(etapa.nome, "pulada")
+        raise ModuleNotFoundError(f"Etapa obrigatoria ausente: {etapa.nome} ({etapa.modulo})")
 
     # O cabecalho vem antes do import: se o modulo da etapa quebrar ao ser
     # importado, o log ja diz de quem e a etapa que falhou.
