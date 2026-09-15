@@ -9,6 +9,10 @@ Cada tabela recebe quatro colunas de linhagem: `_fonte`, `_arquivo_origem`,
 `_data_ingestao` e `_linha_origem`. As duas ultimas tem tipo proprio
 (TIMESTAMP e BIGINT) porque sao metadado da ingestao, nao dado da fonte.
 
+Sao onze tabelas: dez vindas de CSV e uma da API de localidades do IBGE, cuja
+resposta fica em cache em `data/raw/ibge/municipios.json` e so e rebaixada
+quando passa de trinta dias.
+
 As decisoes de leitura abaixo saem de medicao feita nos arquivos reais e
 registrada em `docs/inventario_fontes.md`, secao 5.
 
@@ -25,12 +29,13 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import requests
 
 RAIZ = Path(__file__).resolve().parents[2]
 DIR_BRUTO = RAIZ / "data" / "raw"
@@ -54,26 +59,37 @@ class FonteCSV:
     onde_obter: str      # instrucao exibida quando o arquivo nao existe
 
 
+OLIST_NO_KAGGLE = "dataset 'Brazilian E-Commerce Public Dataset by Olist', no Kaggle"
+
+# As dez fontes CSV do contrato, na ordem da tabela da secao 3.
 FONTES_CSV: tuple[FonteCSV, ...] = (
+    FonteCSV("olist_pedidos", "olist/olist_orders_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_itens_pedido", "olist/olist_order_items_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_produtos", "olist/olist_products_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_clientes", "olist/olist_customers_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_vendedores", "olist/olist_sellers_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_pagamentos", "olist/olist_order_payments_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_avaliacoes", "olist/olist_order_reviews_dataset.csv", "olist", OLIST_NO_KAGGLE),
+    FonteCSV("olist_geolocalizacao", "olist/olist_geolocation_dataset.csv", "olist", OLIST_NO_KAGGLE),
     FonteCSV(
-        tabela="olist_pedidos",
-        origem="olist/olist_orders_dataset.csv",
-        fonte="olist",
-        onde_obter="dataset 'Brazilian E-Commerce Public Dataset by Olist', no Kaggle",
+        "olist_traducao_categoria",
+        "olist/product_category_name_translation.csv",
+        "olist",
+        OLIST_NO_KAGGLE,
     ),
     FonteCSV(
-        tabela="olist_itens_pedido",
-        origem="olist/olist_order_items_dataset.csv",
-        fonte="olist",
-        onde_obter="dataset 'Brazilian E-Commerce Public Dataset by Olist', no Kaggle",
-    ),
-    FonteCSV(
-        tabela="olist_clientes",
-        origem="olist/olist_customers_dataset.csv",
-        fonte="olist",
-        onde_obter="dataset 'Brazilian E-Commerce Public Dataset by Olist', no Kaggle",
+        "socioeconomico_municipios",
+        "socioeconomico/indicadores_municipais.csv",
+        "sidra",
+        "consolidado das tabelas 6579 e 5938 do SIDRA por "
+        "src/utils/baixar_fontes_ibge.py; ver docs/fontes_ibge_sidra.md",
     ),
 )
+
+URL_IBGE = "https://servicodados.ibge.gov.br/api/v1/localidades/municipios"
+CACHE_IBGE = DIR_BRUTO / "ibge" / "municipios.json"
+TABELA_IBGE = "ibge_municipios"
+VALIDADE_CACHE_DIAS = 30
 
 
 @dataclass
@@ -98,6 +114,10 @@ class FonteAusenteError(FileNotFoundError):
 
 class ContagemDivergenteError(RuntimeError):
     """Saida com numero de linhas diferente da origem -- bug de ingestao."""
+
+
+class EstruturaInesperadaError(RuntimeError):
+    """JSON da API veio com uma forma que a ingestao nao sabe achatar."""
 
 
 def sha256_arquivo(caminho: Path) -> str:
@@ -173,11 +193,11 @@ def ler_csv_como_texto(caminho: Path) -> pd.DataFrame:
 
 
 def adicionar_linhagem(
-    dados: pd.DataFrame, fonte: FonteCSV, arquivo_origem: str, data_ingestao: datetime
+    dados: pd.DataFrame, fonte: str, arquivo_origem: str, data_ingestao: datetime
 ) -> pd.DataFrame:
     """Acrescenta as quatro colunas da secao 3 do contrato, nessa ordem."""
     dados = dados.copy()
-    dados["_fonte"] = fonte.fonte
+    dados["_fonte"] = fonte
     dados["_arquivo_origem"] = arquivo_origem
     dados["_data_ingestao"] = data_ingestao
     # Base 1 e por registro, nao por linha fisica do arquivo.
@@ -212,6 +232,55 @@ def gravar_parquet(dados: pd.DataFrame, colunas_dados: list[str], destino: Path)
     return pq.ParquetFile(destino).metadata.num_rows
 
 
+def decidir_data_ingestao(
+    tabela: str, digest: str, destino: Path, manifesto: dict, agora: datetime
+) -> tuple[datetime, bool]:
+    """Preserva o timestamp da execucao anterior enquanto a fonte nao mudar.
+
+    Exigir que o parquet exista evita herdar a data de uma execucao cuja saida
+    foi apagada: sem o arquivo, a ingestao e nova, mesmo com o hash igual.
+    """
+    anterior = manifesto["fontes"].get(tabela)
+    fonte_alterada = not (anterior and anterior["sha256"] == digest and destino.exists())
+    if fonte_alterada:
+        return agora, True
+    return datetime.fromisoformat(anterior["data_ingestao"]), False
+
+
+def registrar_no_manifesto(
+    manifesto: dict, tabela: str, arquivo_origem: str, caminho_origem: str,
+    digest: str, data_ingestao: datetime, linhas: int,
+) -> None:
+    """Grava o manifesto a cada tabela, para ele sempre refletir o que esta em disco."""
+    manifesto["fontes"][tabela] = {
+        "arquivo_origem": arquivo_origem,
+        "caminho_origem": caminho_origem,
+        "sha256": digest,
+        "data_ingestao": data_ingestao.isoformat(),
+        "linhas": linhas,
+    }
+    gravar_manifesto(manifesto)
+
+
+def materializar(
+    dados: pd.DataFrame, colunas_dados: list[str], tabela: str, fonte: str,
+    arquivo_origem: str, data_ingestao: datetime, linhas_entrada: int,
+) -> tuple[Path, int]:
+    """Acrescenta linhagem, grava o parquet e confere a contagem contra a origem."""
+    destino = DIR_BRONZE / f"{tabela}.parquet"
+    linhas_saida = gravar_parquet(
+        adicionar_linhagem(dados, fonte, arquivo_origem, data_ingestao),
+        colunas_dados,
+        destino,
+    )
+    if linhas_saida != linhas_entrada:
+        raise ContagemDivergenteError(
+            f"{tabela}: origem com {linhas_entrada} linhas e parquet com "
+            f"{linhas_saida}. A bronze nao pode criar nem perder linha."
+        )
+    return destino, linhas_saida
+
+
 def ingerir_csv(fonte: FonteCSV, manifesto: dict, agora: datetime) -> ResultadoIngestao:
     inicio = time.perf_counter()
     caminho_origem = exigir_fonte(fonte)
@@ -219,11 +288,9 @@ def ingerir_csv(fonte: FonteCSV, manifesto: dict, agora: datetime) -> ResultadoI
     destino = DIR_BRONZE / f"{fonte.tabela}.parquet"
 
     digest = sha256_arquivo(caminho_origem)
-    anterior = manifesto["fontes"].get(fonte.tabela)
-    # O timestamp so anda quando a fonte muda. Exigir o parquet em disco evita
-    # herdar a data de uma execucao cuja saida foi apagada.
-    fonte_alterada = not (anterior and anterior["sha256"] == digest and destino.exists())
-    data_ingestao = agora if fonte_alterada else datetime.fromisoformat(anterior["data_ingestao"])
+    data_ingestao, fonte_alterada = decidir_data_ingestao(
+        fonte.tabela, digest, destino, manifesto, agora
+    )
 
     linhas_entrada = contar_registros(caminho_origem)
     dados = ler_csv_como_texto(caminho_origem)
@@ -235,25 +302,14 @@ def ingerir_csv(fonte: FonteCSV, manifesto: dict, agora: datetime) -> ResultadoI
             f"devolveu {len(dados)} linhas."
         )
 
-    linhas_saida = gravar_parquet(
-        adicionar_linhagem(dados, fonte, arquivo_origem, data_ingestao),
-        colunas_dados,
-        destino,
+    destino, linhas_saida = materializar(
+        dados, colunas_dados, fonte.tabela, fonte.fonte, arquivo_origem,
+        data_ingestao, linhas_entrada,
     )
-    if linhas_saida != linhas_entrada:
-        raise ContagemDivergenteError(
-            f"{fonte.tabela}: origem com {linhas_entrada} linhas e parquet com "
-            f"{linhas_saida}. A bronze nao pode criar nem perder linha."
-        )
-
-    manifesto["fontes"][fonte.tabela] = {
-        "arquivo_origem": arquivo_origem,
-        "caminho_origem": fonte.origem,
-        "sha256": digest,
-        "data_ingestao": data_ingestao.isoformat(),
-        "linhas": linhas_saida,
-    }
-    gravar_manifesto(manifesto)
+    registrar_no_manifesto(
+        manifesto, fonte.tabela, arquivo_origem, fonte.origem, digest,
+        data_ingestao, linhas_saida,
+    )
 
     return ResultadoIngestao(
         tabela=fonte.tabela,
@@ -269,11 +325,132 @@ def ingerir_csv(fonte: FonteCSV, manifesto: dict, agora: datetime) -> ResultadoI
     )
 
 
+def obter_json_ibge() -> Path:
+    """Devolve o JSON de municipios, reusando o cache enquanto ele valer.
+
+    O contrato manda todos os membros trabalharem sobre o mesmo JSON, entao a
+    resposta e gravada byte a byte, sem reformatar: qualquer reindentacao
+    mudaria o sha256 que o grupo usa para conferir que esta comparando a
+    mesma versao do cadastro.
+    """
+    if CACHE_IBGE.exists():
+        idade = datetime.now() - datetime.fromtimestamp(CACHE_IBGE.stat().st_mtime)
+        if idade < timedelta(days=VALIDADE_CACHE_DIAS):
+            logger.info(
+                "ibge: cache com %d dia(s) em %s; a API nao sera acessada",
+                idade.days, CACHE_IBGE,
+            )
+            return CACHE_IBGE
+        logger.info(
+            "ibge: cache com %d dia(s), acima dos %d permitidos; baixando de novo",
+            idade.days, VALIDADE_CACHE_DIAS,
+        )
+    else:
+        logger.info("ibge: sem cache local; baixando de %s", URL_IBGE)
+
+    resposta = requests.get(URL_IBGE, timeout=120)
+    resposta.raise_for_status()
+    CACHE_IBGE.parent.mkdir(parents=True, exist_ok=True)
+    CACHE_IBGE.write_bytes(resposta.content)
+    logger.info("ibge: %s bytes gravados em %s", len(resposta.content), CACHE_IBGE)
+    return CACHE_IBGE
+
+
+def achatar_registro(no: dict, prefixo: str, plano: dict[str, str]) -> None:
+    """Achata um municipio em pares caminho -> texto.
+
+    O nome da coluna e o caminho no JSON com `_` no lugar do ponto e do hifen,
+    em minusculas, conforme a convencao de identificadores da secao 1 do
+    contrato: `microrregiao.mesorregiao.UF.sigla` vira
+    `microrregiao_mesorregiao_uf_sigla`.
+
+    Campo nulo simplesmente nao gera coluna nesse registro -- quem preenche o
+    vazio e o `fillna('')` na montagem do DataFrame, que e o que mantem a
+    promessa de que a bronze nao entrega NULL em coluna de dado. E o caso de
+    Boa Esperanca do Norte (5101837), unico municipio sem `microrregiao`.
+    """
+    for chave, valor in no.items():
+        caminho = f"{prefixo}_{chave}" if prefixo else chave
+        caminho = caminho.replace("-", "_").lower()
+        if isinstance(valor, dict):
+            achatar_registro(valor, caminho, plano)
+        elif isinstance(valor, list):
+            # Hoje nao existe lista nenhuma na resposta. Se a API passar a
+            # devolver uma, e melhor parar do que inventar uma serializacao.
+            raise EstruturaInesperadaError(
+                f"ibge: campo '{caminho}' veio como lista, estrutura nao prevista "
+                "pela ingestao. Confira o retorno da API antes de seguir."
+            )
+        elif valor is not None:
+            plano[caminho] = str(valor)
+
+
+def ingerir_ibge(manifesto: dict, agora: datetime) -> ResultadoIngestao:
+    inicio = time.perf_counter()
+    caminho_origem = obter_json_ibge()
+    destino = DIR_BRONZE / f"{TABELA_IBGE}.parquet"
+
+    digest = sha256_arquivo(caminho_origem)
+    # Hash exigido pelo contrato: e por ele que o grupo confere que todos estao
+    # com a mesma versao do cadastro de municipios.
+    logger.info("ibge: sha256 do JSON = %s", digest)
+    data_ingestao, fonte_alterada = decidir_data_ingestao(
+        TABELA_IBGE, digest, destino, manifesto, agora
+    )
+
+    registros = json.loads(caminho_origem.read_text(encoding="utf-8"))
+    linhas_entrada = len(registros)
+
+    colunas: dict[str, None] = {}  # dict preserva a ordem de primeira aparicao
+    planos = []
+    for registro in registros:
+        plano: dict[str, str] = {}
+        achatar_registro(registro, "", plano)
+        for coluna in plano:
+            colunas.setdefault(coluna)
+        planos.append(plano)
+
+    colunas_dados = list(colunas)
+    dados = pd.DataFrame(planos, columns=colunas_dados).fillna("")
+    incompletos = sum(1 for plano in planos if len(plano) != len(colunas_dados))
+    if incompletos:
+        logger.info(
+            "ibge: %d municipio(s) sem algum ramo da hierarquia; colunas ausentes gravadas como ''",
+            incompletos,
+        )
+
+    destino, linhas_saida = materializar(
+        dados, colunas_dados, TABELA_IBGE, "ibge_api", URL_IBGE,
+        data_ingestao, linhas_entrada,
+    )
+    registrar_no_manifesto(
+        manifesto, TABELA_IBGE, URL_IBGE,
+        CACHE_IBGE.relative_to(DIR_BRUTO).as_posix(), digest, data_ingestao, linhas_saida,
+    )
+
+    return ResultadoIngestao(
+        tabela=TABELA_IBGE,
+        arquivo_origem=URL_IBGE,
+        caminho_saida=destino,
+        linhas_entrada=linhas_entrada,
+        linhas_saida=linhas_saida,
+        colunas_dados=len(colunas_dados),
+        data_ingestao=data_ingestao,
+        fonte_alterada=fonte_alterada,
+        sha256=digest,
+        duracao_s=time.perf_counter() - inicio,
+    )
+
+
+def tabelas_disponiveis() -> list[str]:
+    """As onze tabelas da secao 3 do contrato, na ordem em que sao ingeridas."""
+    return [f.tabela for f in FONTES_CSV] + [TABELA_IBGE]
+
+
 def executar(tabelas: list[str] | None = None) -> list[ResultadoIngestao]:
     """Roda a bronze inteira, ou so as tabelas pedidas. Ponto de entrada do pipeline."""
-    selecionadas = [f for f in FONTES_CSV if tabelas is None or f.tabela in tabelas]
     if tabelas is not None:
-        desconhecidas = set(tabelas) - {f.tabela for f in FONTES_CSV}
+        desconhecidas = set(tabelas) - set(tabelas_disponiveis())
         if desconhecidas:
             raise ValueError(f"Tabela bronze desconhecida: {', '.join(sorted(desconhecidas))}")
 
@@ -281,9 +458,14 @@ def executar(tabelas: list[str] | None = None) -> list[ResultadoIngestao]:
     manifesto = carregar_manifesto()
     agora = datetime.now().replace(microsecond=0)
 
+    trabalho = [(f.tabela, lambda f=f: ingerir_csv(f, manifesto, agora)) for f in FONTES_CSV]
+    trabalho.append((TABELA_IBGE, lambda: ingerir_ibge(manifesto, agora)))
+
     resultados = []
-    for fonte in selecionadas:
-        resultado = ingerir_csv(fonte, manifesto, agora)
+    for tabela, ingerir in trabalho:
+        if tabelas is not None and tabela not in tabelas:
+            continue
+        resultado = ingerir()
         resultados.append(resultado)
         logger.info(
             "%-26s %9s linhas -> %9s linhas | %2d colunas + 4 de linhagem | "
