@@ -6,34 +6,40 @@ cabeçalhos e valores reais dos nove CSVs em `data/raw/olist/` (inspecionados
 diretamente com DuckDB) — nenhum dado fictício foi criado para antecipar a
 etapa.
 
-`src/silver/transform.py` implementa o que está aqui. Como a bronze
-(responsabilidade do Membro 1) ainda não existe, o módulo não pôde ser
-executado contra `data/bronze/*.parquet` de verdade; a lógica SQL foi validada
-à parte, lendo os CSVs reais diretamente (script de uso único, não
-versionado), simulando apenas o formato colunar da bronze (colunas originais
-como string). Os resultados dessa validação estão na seção 8.
+`src/silver/transform.py` implementa o que está aqui. A bronze do Membro 1
+(`src/bronze/ingest.py`, contrato em `docs/membro1_bronze.md`) já existe e o
+módulo foi executado contra `data/bronze/*.parquet` de verdade — os resultados
+estão na seção 10, que substitui a validação simulada que existia aqui antes.
 
 ## 1. Contrato de entrada esperado da bronze
 
-Nomes de arquivo **a confirmar com o Membro 1** — usei nomes em português para
-manter a mesma convenção da silver; se a bronze nomear diferente, é só ajustar
-o dicionário `BRONZE_ESPERADA` em `transform.py`, sem tocar no resto do código.
+Nomes de arquivo confirmados pelo Membro 1 em `docs/membro1_bronze.md` seção 3
+(contrato v1.1) e refletidos em `BRONZE_ESPERADA` em `transform.py`.
 
 | Arquivo esperado | Fonte Olist | Colunas originais (todas string, conforme contrato da bronze) |
 | --- | --- | --- |
-| `data/bronze/pedidos.parquet` | `olist_orders_dataset.csv` | `order_id, customer_id, order_status, order_purchase_timestamp, order_approved_at, order_delivered_carrier_date, order_delivered_customer_date, order_estimated_delivery_date` |
-| `data/bronze/itens_pedido.parquet` | `olist_order_items_dataset.csv` | `order_id, order_item_id, product_id, seller_id, shipping_limit_date, price, freight_value` |
-| `data/bronze/pagamentos.parquet` | `olist_order_payments_dataset.csv` | `order_id, payment_sequential, payment_type, payment_installments, payment_value` |
-| `data/bronze/avaliacoes.parquet` | `olist_order_reviews_dataset.csv` | `review_id, order_id, review_score, review_comment_title, review_comment_message, review_creation_date, review_answer_timestamp` |
-| `data/bronze/produtos.parquet` | `olist_products_dataset.csv` | `product_id, product_category_name, product_name_lenght, product_description_lenght, product_photos_qty, product_weight_g, product_length_cm, product_height_cm, product_width_cm` |
-| `data/bronze/clientes.parquet` | `olist_customers_dataset.csv` | `customer_id, customer_unique_id, customer_zip_code_prefix, customer_city, customer_state` |
-| `data/bronze/vendedores.parquet` | `olist_sellers_dataset.csv` | `seller_id, seller_zip_code_prefix, seller_city, seller_state` |
-| `data/bronze/geolocalizacao.parquet` | `olist_geolocation_dataset.csv` | `geolocation_zip_code_prefix, geolocation_lat, geolocation_lng, geolocation_city, geolocation_state` |
-| `data/bronze/traducao_categorias.parquet` | `product_category_name_translation.csv` | `product_category_name, product_category_name_english` |
+| `data/bronze/olist_pedidos.parquet` | `olist_orders_dataset.csv` | `order_id, customer_id, order_status, order_purchase_timestamp, order_approved_at, order_delivered_carrier_date, order_delivered_customer_date, order_estimated_delivery_date` |
+| `data/bronze/olist_itens_pedido.parquet` | `olist_order_items_dataset.csv` | `order_id, order_item_id, product_id, seller_id, shipping_limit_date, price, freight_value` |
+| `data/bronze/olist_pagamentos.parquet` | `olist_order_payments_dataset.csv` | `order_id, payment_sequential, payment_type, payment_installments, payment_value` |
+| `data/bronze/olist_avaliacoes.parquet` | `olist_order_reviews_dataset.csv` | `review_id, order_id, review_score, review_comment_title, review_comment_message, review_creation_date, review_answer_timestamp` |
+| `data/bronze/olist_produtos.parquet` | `olist_products_dataset.csv` | `product_id, product_category_name, product_name_lenght, product_description_lenght, product_photos_qty, product_weight_g, product_length_cm, product_height_cm, product_width_cm` |
+| `data/bronze/olist_clientes.parquet` | `olist_customers_dataset.csv` | `customer_id, customer_unique_id, customer_zip_code_prefix, customer_city, customer_state` |
+| `data/bronze/olist_vendedores.parquet` | `olist_sellers_dataset.csv` | `seller_id, seller_zip_code_prefix, seller_city, seller_state` |
+| `data/bronze/olist_geolocalizacao.parquet` | `olist_geolocation_dataset.csv` | `geolocation_zip_code_prefix, geolocation_lat, geolocation_lng, geolocation_city, geolocation_state` |
+| `data/bronze/olist_traducao_categoria.parquet` | `product_category_name_translation.csv` | `product_category_name, product_category_name_english` |
 
-Todas as colunas de origem chegam como string, mais `_fonte`, `_arquivo_origem`
-e `_data_ingestao` (contrato da bronze no README). A silver faz toda a
-tipagem: datas, decimais e inteiros são convertidos aqui, nunca antes.
+Todas as colunas de origem chegam como string, mais `_fonte`, `_arquivo_origem`,
+`_data_ingestao` e `_linha_origem` (contrato da bronze em
+`docs/membro1_bronze.md` seção 4). A silver faz toda a tipagem: datas,
+decimais e inteiros são convertidos aqui, nunca antes.
+
+Confirmado no contrato de dados (`docs/contratos_dados.md` seção 2): a bronze
+preserva string vazia (`''`) tal como está, inclusive em campo que a silver vai
+tipar como data/número — a conversão de `''` para `NULL` é responsabilidade
+exclusiva da silver, feita com `nullif(trim(coluna), '')` antes de cada `cast`
+em `transform.py`. Sem isso, o `CAST` de `''` para `TIMESTAMP`/`DECIMAL`/
+`INTEGER` derruba a execução (foi o primeiro erro real ao rodar contra a
+bronze de verdade — ver seção 10).
 
 Todo prefixo de CEP (`*_zip_code_prefix`) tem 5 dígitos nos três arquivos
 (clientes, vendedores, geolocalização) — confirmado nos dados reais — e deve
@@ -195,15 +201,28 @@ de CEP distintos.
   inventado ponto nenhum para eles, o que é coerente com a regra do Membro 3
   de não estimar ponto sem evidência.
 
-## 10. Validação da lógica (sem bronze pronta)
+## 10. Validação da lógica (contra a bronze real)
 
-Como não crio dados fictícios para antecipar a etapa, rodei o próprio
-`src/silver/transform.py` (mesmo código, sem alterar nenhuma regra) contra uma
-bronze simulada: os nove CSVs reais convertidos para string coluna a coluna
-(`all_varchar=true`), do jeito que a bronze contratualmente vai entregar,
-gravados em parquet fora do repositório (scratchpad, não commitado). Todas as
-nove tabelas foram geradas e conferidas linha a linha contra os números
-levantados nas seções acima:
+`python -m src.run_pipeline --ate silver` (bronze do Membro 1 seguida da
+silver) roda de ponta a ponta contra `data/bronze/*.parquet` de verdade,
+gerado por `src/bronze/ingest.py`. Rodar ambas as etapas exigiu dois ajustes
+em `transform.py`, os dois motivados por como a bronze real entrega os dados
+(não por dado inesperado do Olist):
+
+1. **Nomes de arquivo:** `BRONZE_ESPERADA` apontava para nomes propostos antes
+   da bronze existir (seção 1 antiga). Ajustado para os nomes reais
+   (`olist_pedidos.parquet` etc., seção 1 atual).
+2. **`''` não é `NULL`:** a bronze preserva string vazia tal como está (por
+   contrato, `docs/contratos_dados.md` seção 2); o primeiro `CAST` de uma
+   coluna de data (`order_approved_at`, com `''` em pedidos sem aprovação)
+   derrubava a execução com `Conversion Error`. Todo `CAST` para
+   `TIMESTAMP`/`DECIMAL`/`INTEGER`/`DOUBLE` em `transform.py` agora passa por
+   `nullif(trim(coluna), '')` antes de tipar. Os dois campos de texto livre de
+   `avaliacoes` (`titulo_review`, `mensagem_review`) recebem o mesmo
+   tratamento, para que "sem comentário" vire `NULL`, não string vazia.
+
+Com os dois ajustes, todas as nove tabelas foram geradas contra a bronze real
+e conferidas linha a linha contra os números levantados nas seções acima:
 
 - `pedidos`: 99.441 linhas; exatamente 8 com `flag_entrega_ausente = true`
   (todas com `status_pedido = 'delivered'`); nenhuma linha com
@@ -230,21 +249,15 @@ levantados nas seções acima:
   `flag_peso_imputado`/`flag_dimensoes_imputadas`, e nenhuma linha final com
   peso ou dimensão nula.
 - `geolocalizacao_cep`: 19.010 prefixos agregados a partir de 1.000.163
-  pontos brutos; 26 pontos sinalizados como inválidos (fora da caixa do
-  Brasil) e excluídos do cálculo da mediana.
-
-Isso não substitui a integração real com a bronze do Membro 1 — é a garantia
-de que a lógica em si está correta antes dela existir.
-
-Quando a bronze existir, basta apontar `BRONZE_ESPERADA` em
-`src/silver/transform.py` para os arquivos reais e rodar
-`python -m src.silver.transform` — o script falha cedo, citando nome e
-caminho, se algum arquivo obrigatório da bronze estiver ausente.
+  pontos brutos; **42** pontos sinalizados como inválidos (31 com latitude
+  fora da caixa do Brasil, 37 com longitude fora, união das duas condições) e
+  excluídos do cálculo da mediana. Correção em relação à validação simulada
+  anterior desta seção, que reportava 26 — a interseção (pontos com *ambas*
+  fora da caixa), não a união usada pela regra real do
+  `flag_coordenada_invalida` (seção 9).
 
 ## 11. Pendências que dependem de decisão conjunta / de outros membros
 
-- Confirmar com o Membro 1 os nomes reais dos arquivos parquet da bronze
-  (seção 1) e ajustar `BRONZE_ESPERADA` se forem diferentes dos que assumi.
 - `distancia_km` (vendedor–cliente) depende do ponto representativo municipal
   que o Membro 3 só calcula depois de receber `geolocalizacao_cep` — por isso
   não está nesta camada; fica para a integração/gold.

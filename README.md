@@ -9,7 +9,7 @@ O projeto prioriza SQL legível, decisões de negócio documentadas e execução
 Implementação com revisão ao final de cada etapa:
 
 1. **Bronze: pronta e executada.** Onze tabelas, 1.562.064 linhas, contagem conferida arquivo por arquivo. Ver [`docs/membro1_bronze.md`](docs/membro1_bronze.md).
-2. Silver: limpeza, tipagem e agregações. Em desenvolvimento.
+2. **Silver: pronta e executada.** Nove tabelas geradas a partir da bronze real, 1.564.864 linhas. Ver [`docs/silver_contrato.md`](docs/silver_contrato.md).
 3. Integração de municípios: match exato, fallback geográfico e de-para manual. Em desenvolvimento.
 4. Gold: dimensões e fatos materializadas. Em desenvolvimento.
 5. Qualidade: validações e relatório. Em desenvolvimento.
