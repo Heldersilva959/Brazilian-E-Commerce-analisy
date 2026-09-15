@@ -2,8 +2,3 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-
-# Os dados ficam locais; apenas os marcadores de diretório são versionados.
-/data/**
-!/data/**/
-!/data/**/.gitkeep
