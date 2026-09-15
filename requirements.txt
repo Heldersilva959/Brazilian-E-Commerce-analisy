@@ -1,3 +1,14 @@
-duckdb
-pandas
-pyarrow
+# Versoes fixadas para que os quatro membros rodem o mesmo pipeline.
+# Instalar com: pip install -r requirements.txt
+
+# Leitura dos CSV na bronze e manipulacao tabular nas camadas seguintes.
+pandas==2.2.3
+
+# Escrita dos Parquet com esquema declarado e compressao snappy.
+pyarrow==18.0.0
+
+# SQL das camadas silver e gold, e o banco final em data/gold/dw.duckdb.
+duckdb==1.5.5
+
+# Unica dependencia de rede: a API de localidades do IBGE na bronze.
+requests==2.32.3

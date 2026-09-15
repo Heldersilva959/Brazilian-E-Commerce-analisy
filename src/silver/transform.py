@@ -11,11 +11,10 @@ pagamento predominante, desempate de avaliacoes, faixas de preco, outlier de
 frete e a agregacao de geolocalizacao por prefixo de CEP) estao documentadas
 com os numeros reais do dataset em `docs/silver_contrato.md`.
 
-Os nomes de arquivo esperados da bronze (`BRONZE_ESPERADA`) sao uma proposta
-deste modulo, a confirmar com quem implementa a bronze; se os nomes reais
-forem outros, so e preciso ajustar esse dicionario.
+Os nomes de arquivo esperados da bronze (`BRONZE_ESPERADA`) sao os
+confirmados pelo Membro 1 em `docs/membro1_bronze.md` secao 3.
 
-Execucao (depois que a bronze existir):
+Execucao:
 
     .venv\\Scripts\\python.exe -m src.silver.transform
 """
@@ -31,18 +30,18 @@ RAIZ = Path(__file__).resolve().parents[2]
 DIR_BRONZE = RAIZ / "data" / "bronze"
 DIR_SILVER = RAIZ / "data" / "silver"
 
-# Arquivo esperado da bronze para cada entidade -- ver docs/silver_contrato.md
-# secao 1. Ajustar aqui se a bronze nomear diferente.
+# Arquivo esperado da bronze para cada entidade -- nomes confirmados pelo
+# Membro 1 em docs/membro1_bronze.md secao 3 (contrato v1.1).
 BRONZE_ESPERADA: dict[str, Path] = {
-    "pedidos": DIR_BRONZE / "pedidos.parquet",
-    "itens_pedido": DIR_BRONZE / "itens_pedido.parquet",
-    "pagamentos": DIR_BRONZE / "pagamentos.parquet",
-    "avaliacoes": DIR_BRONZE / "avaliacoes.parquet",
-    "produtos": DIR_BRONZE / "produtos.parquet",
-    "clientes": DIR_BRONZE / "clientes.parquet",
-    "vendedores": DIR_BRONZE / "vendedores.parquet",
-    "geolocalizacao": DIR_BRONZE / "geolocalizacao.parquet",
-    "traducao_categorias": DIR_BRONZE / "traducao_categorias.parquet",
+    "pedidos": DIR_BRONZE / "olist_pedidos.parquet",
+    "itens_pedido": DIR_BRONZE / "olist_itens_pedido.parquet",
+    "pagamentos": DIR_BRONZE / "olist_pagamentos.parquet",
+    "avaliacoes": DIR_BRONZE / "olist_avaliacoes.parquet",
+    "produtos": DIR_BRONZE / "olist_produtos.parquet",
+    "clientes": DIR_BRONZE / "olist_clientes.parquet",
+    "vendedores": DIR_BRONZE / "olist_vendedores.parquet",
+    "geolocalizacao": DIR_BRONZE / "olist_geolocalizacao.parquet",
+    "traducao_categorias": DIR_BRONZE / "olist_traducao_categoria.parquet",
 }
 
 # Caixa delimitadora aproximada do territorio brasileiro, usada so para
@@ -93,11 +92,14 @@ def transformar_pedidos(con: duckdb.DuckDBPyConnection) -> Path:
                 order_id,
                 customer_id,
                 order_status as status_pedido,
-                cast(order_purchase_timestamp as timestamp) as ts_compra,
-                cast(order_approved_at as timestamp) as ts_aprovacao,
-                cast(order_delivered_carrier_date as timestamp) as ts_envio_transportadora,
-                cast(order_delivered_customer_date as timestamp) as ts_entrega_cliente,
-                cast(order_estimated_delivery_date as timestamp) as ts_estimativa_entrega
+                cast(nullif(trim(order_purchase_timestamp), '') as timestamp) as ts_compra,
+                cast(nullif(trim(order_approved_at), '') as timestamp) as ts_aprovacao,
+                cast(nullif(trim(order_delivered_carrier_date), '') as timestamp)
+                    as ts_envio_transportadora,
+                cast(nullif(trim(order_delivered_customer_date), '') as timestamp)
+                    as ts_entrega_cliente,
+                cast(nullif(trim(order_estimated_delivery_date), '') as timestamp)
+                    as ts_estimativa_entrega
             from read_parquet('{arquivos["pedidos"].as_posix()}')
         ),
         derivado as (
@@ -141,12 +143,12 @@ def transformar_itens_pedido(con: duckdb.DuckDBPyConnection) -> Path:
         with base as (
             select
                 order_id,
-                cast(order_item_id as integer) as item_pedido_id,
+                cast(nullif(trim(order_item_id), '') as integer) as item_pedido_id,
                 product_id,
                 seller_id,
-                cast(shipping_limit_date as timestamp) as ts_limite_envio,
-                cast(price as decimal(12, 2)) as preco_produto,
-                cast(freight_value as decimal(12, 2)) as valor_frete
+                cast(nullif(trim(shipping_limit_date), '') as timestamp) as ts_limite_envio,
+                cast(nullif(trim(price), '') as decimal(12, 2)) as preco_produto,
+                cast(nullif(trim(freight_value), '') as decimal(12, 2)) as valor_frete
             from read_parquet('{arquivos["itens_pedido"].as_posix()}')
         ),
         cercas as (
@@ -185,8 +187,8 @@ def transformar_pagamentos(con: duckdb.DuckDBPyConnection) -> Path:
             select
                 order_id,
                 payment_type,
-                cast(payment_installments as integer) as payment_installments,
-                cast(payment_value as decimal(12, 2)) as payment_value
+                cast(nullif(trim(payment_installments), '') as integer) as payment_installments,
+                cast(nullif(trim(payment_value), '') as decimal(12, 2)) as payment_value
             from read_parquet('{arquivos["pagamentos"].as_posix()}')
         ),
         por_tipo as (
@@ -239,11 +241,12 @@ def transformar_avaliacoes(con: duckdb.DuckDBPyConnection) -> Path:
             select
                 review_id,
                 order_id,
-                cast(review_score as integer) as nota_review,
-                review_comment_title as titulo_review,
-                review_comment_message as mensagem_review,
-                cast(review_creation_date as timestamp) as ts_criacao_review,
-                cast(review_answer_timestamp as timestamp) as ts_resposta_review
+                cast(nullif(trim(review_score), '') as integer) as nota_review,
+                nullif(trim(review_comment_title), '') as titulo_review,
+                nullif(trim(review_comment_message), '') as mensagem_review,
+                cast(nullif(trim(review_creation_date), '') as timestamp) as ts_criacao_review,
+                cast(nullif(trim(review_answer_timestamp), '') as timestamp)
+                    as ts_resposta_review
             from read_parquet('{arquivos["avaliacoes"].as_posix()}')
         ),
         contagem as (
@@ -287,10 +290,10 @@ def transformar_produtos(con: duckdb.DuckDBPyConnection) -> Path:
                 product_id,
                 coalesce(nullif(trim(product_category_name), ''), 'nao_informado')
                     as categoria_produto,
-                cast(product_weight_g as double) as peso_g,
-                cast(product_length_cm as double) as comprimento_cm,
-                cast(product_height_cm as double) as altura_cm,
-                cast(product_width_cm as double) as largura_cm
+                cast(nullif(trim(product_weight_g), '') as double) as peso_g,
+                cast(nullif(trim(product_length_cm), '') as double) as comprimento_cm,
+                cast(nullif(trim(product_height_cm), '') as double) as altura_cm,
+                cast(nullif(trim(product_width_cm), '') as double) as largura_cm
             from read_parquet('{arquivos["produtos"].as_posix()}')
         ),
         traducao as (
@@ -380,17 +383,27 @@ def transformar_geolocalizacao(con: duckdb.DuckDBPyConnection) -> tuple[Path, Pa
     """
     arquivos = _tabelas_requeridas(["geolocalizacao"])
     sql_pontos = f"""
+        with tipado as (
+            select
+                geolocation_zip_code_prefix as cep_prefixo,
+                cast(nullif(trim(geolocation_lat), '') as double) as latitude,
+                cast(nullif(trim(geolocation_lng), '') as double) as longitude,
+                trim(geolocation_city) as cidade,
+                trim(geolocation_state) as uf
+            from read_parquet('{arquivos["geolocalizacao"].as_posix()}')
+        )
         select
-            geolocation_zip_code_prefix as cep_prefixo,
-            cast(geolocation_lat as double) as latitude,
-            cast(geolocation_lng as double) as longitude,
-            trim(geolocation_city) as cidade,
-            trim(geolocation_state) as uf,
-            (
-                cast(geolocation_lat as double) not between {LAT_MIN_BRASIL} and {LAT_MAX_BRASIL}
-                or cast(geolocation_lng as double) not between {LNG_MIN_BRASIL} and {LNG_MAX_BRASIL}
+            cep_prefixo,
+            latitude,
+            longitude,
+            cidade,
+            uf,
+            coalesce(
+                latitude not between {LAT_MIN_BRASIL} and {LAT_MAX_BRASIL}
+                or longitude not between {LNG_MIN_BRASIL} and {LNG_MAX_BRASIL},
+                true
             ) as flag_coordenada_invalida
-        from read_parquet('{arquivos["geolocalizacao"].as_posix()}')
+        from tipado
     """
     destino_pontos = _gravar(con, sql_pontos, DIR_SILVER / "geolocalizacao_pontos.parquet")
 

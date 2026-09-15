@@ -6,23 +6,26 @@ O projeto prioriza SQL legível, decisões de negócio documentadas e execução
 
 ## Estado atual
 
-Somente a estrutura e o planejamento estão preparados. O pipeline ainda não foi implementado ou executado. Nenhuma contagem, amostra ou taxa de match foi calculada.
-
 Implementação com revisão ao final de cada etapa:
 
-1. Bronze: ingestão fiel e linhagem.
-2. Silver: limpeza, tipagem e agregações.
-3. Integração de municípios: match exato, fallback geográfico e de-para manual.
-4. Gold: dimensões e fatos materializadas.
-5. Qualidade: validações e relatório.
+1. **Bronze: pronta e executada.** Onze tabelas, 1.562.064 linhas, contagem conferida arquivo por arquivo. Ver [`docs/membro1_bronze.md`](docs/membro1_bronze.md).
+2. **Silver: pronta e executada.** Nove tabelas geradas a partir da bronze real, 1.564.864 linhas. Ver [`docs/silver_contrato.md`](docs/silver_contrato.md).
+3. Integração de municípios: match exato, fallback geográfico e de-para manual. Em desenvolvimento.
+4. Gold: dimensões e fatos materializadas. Em desenvolvimento.
+5. Qualidade: validações e relatório. Em desenvolvimento.
+
+O orquestrador (`src/run_pipeline.py`) já roda de ponta a ponta: as etapas ainda não escritas são anunciadas e puladas, e o pipeline segue. As taxas de match e o relatório de qualidade ainda não foram calculados.
+
+O levantamento das fontes brutas — contagens, colunas, tipos, vazios, encoding e `sha256` de cada arquivo — está em [`docs/inventario_fontes.md`](docs/inventario_fontes.md).
 
 ## Ambiente
 
-Python 3.11 ou superior. Dependências diretas em `requirements.txt`:
+Python 3.11 ou superior. Quatro dependências diretas, com versão fixada em `requirements.txt`:
 
-- DuckDB: transformações SQL e banco dimensional.
-- pandas: manipulações tabulares quando forem mais simples que SQL.
-- PyArrow: suporte a Parquet nas operações com pandas.
+- **DuckDB** (`1.5.5`): transformações SQL da silver e da gold, e o banco dimensional.
+- **pandas** (`2.2.3`): leitura dos CSV na bronze e manipulações tabulares.
+- **PyArrow** (`18.0.0`): escrita dos Parquet com esquema declarado.
+- **requests** (`2.32.3`): única dependência de rede, usada na API de localidades do IBGE.
 
 No PowerShell, a partir da raiz do repositório:
 
@@ -31,15 +34,17 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-As versões ainda não estão fixadas: serão registradas após validar a primeira camada no ambiente real. O acesso HTTP ao IBGE usará a biblioteca padrão do Python.
-
-Ao término da implementação, o comando de execução será:
+## Execução
 
 ```powershell
-python src/run_pipeline.py
+python -m src.run_pipeline                  # bronze -> silver -> integracao -> gold -> qualidade
+python -m src.run_pipeline --etapa bronze   # só uma etapa
+python -m src.run_pipeline --ate silver     # da primeira etapa até essa
 ```
 
-Esse arquivo ainda não existe nesta etapa. Não são usados dados sintéticos ou mocks. Arquivos obrigatórios ausentes deverão interromper a execução com nome e caminho esperados.
+O log traz, por etapa, horário de início, duração, tabelas geradas e contagem de linhas de entrada e de saída. Etapa cujo módulo ainda não foi escrito é anunciada e pulada; erro dentro de uma etapa que existe derruba a execução, com o log dizendo qual etapa quebrou.
+
+Não são usados dados sintéticos ou mocks. Arquivo obrigatório ausente interrompe a execução informando a tabela afetada, o caminho esperado e onde obter o arquivo.
 
 ## Estrutura
 
@@ -64,7 +69,9 @@ Esse arquivo ainda não existe nesta etapa. Não são usados dados sintéticos o
 └── README.md
 ```
 
-Os módulos serão adicionados na etapa correspondente: `src/run_pipeline.py`, `src/bronze/ingest.py`, `src/silver/transform.py`, `src/silver/integracao_municipios.py`, `src/gold/dimensional.py`, `src/gold/qualidade.py` e `src/utils/normalizacao.py`.
+Já existem `src/run_pipeline.py`, `src/bronze/ingest.py` e `src/silver/transform.py`. Faltam `src/silver/integracao_municipios.py`, `src/gold/dimensional.py`, `src/gold/qualidade.py` e `src/utils/normalizacao.py`, que entram na etapa de cada responsável.
+
+`data/raw/` é versionado no Git; `data/bronze/`, `data/silver/` e `data/gold/` não, porque são reconstruídos a cada execução (contrato §1).
 
 ## Fontes e preparação dos arquivos
 
@@ -90,9 +97,9 @@ O projeto não fará download do Kaggle por script.
 
 Endpoint: [municípios do IBGE](https://servicodados.ibge.gov.br/api/v1/localidades/municipios).
 
-Na primeira ingestão, o pipeline obterá a resposta e a guardará em `data/raw/ibge/municipios.json`. Nas execuções seguintes, reutilizará o cache. A ausência desse cache é a única ausência de fonte que permite obtenção automática; falha na API deverá interromper a execução com uma mensagem clara.
+A bronze reutiliza `data/raw/ibge/municipios.json` enquanto ele tiver menos de 30 dias; passou disso, ou não existe, ela baixa e grava a resposta byte a byte, sem reformatar. A ausência desse cache é a única ausência de fonte que permite obtenção automática; falha na API interrompe a execução. O `sha256` do JSON vai para o log a cada execução, para o grupo conferir que está todo mundo com a mesma versão do cadastro.
 
-A resposta original será preservada, com registro da data de obtenção. Não se pressupõe uma contagem fixa de municípios ou presença universal das antigas microrregiões e mesorregiões. A hierarquia disponível será usada para obter UF e região. O cadastro atual pode diferir do recorte de 2017; incompatibilidades serão reportadas.
+Nada pressupõe contagem fixa de municípios nem presença universal das antigas microrregiões e mesorregiões — e com razão: o cadastro atual tem **5.571** municípios, um a mais que o recorte de 2017, e **Boa Esperança do Norte (5101837, MT)** não tem microrregião nem mesorregião. UF e região devem ser lidas pelo ramo `regiao-imediata`, que está preenchido em todos.
 
 ### 3. SIDRA — retrato socioeconômico de 2017
 
@@ -150,9 +157,13 @@ A integração atenderá clientes e vendedores. A taxa principal será a propor�
 
 ### Bronze
 
-Parquet com campos de origem como strings, sem limpar valores ou renomear colunas; acrescentar somente `_fonte`, `_arquivo_origem` e `_data_ingestao`. Para JSON, preservar também sua estrutura original. Cópias dos arquivos originais serão mantidas na bronze para possibilitar reconstrução byte a byte, além da representação tabular.
+Parquet com todos os campos de origem como texto, sem limpar valores nem renomear colunas. Quatro colunas de linhagem em cada tabela: `_fonte`, `_arquivo_origem`, `_data_ingestao` e `_linha_origem` (número do registro na origem, base 1). Nenhum filtro, nenhuma deduplicação: a contagem de saída é conferida contra a de entrada arquivo por arquivo, e divergência derruba a execução.
 
-A data de primeira ingestão será mantida enquanto o conteúdo da fonte permanecer igual. A verificação de conteúdo permitirá reconhecer fontes inalteradas e preservar a idempotência.
+Os arquivos originais não são copiados para a bronze — `data/raw/` é versionado no Git, então já serve de referência para auditoria.
+
+A data de ingestão é mantida enquanto o conteúdo da fonte permanecer igual: o `sha256` de cada origem fica em `data/bronze/_manifesto.json`, e a reexecução com fonte inalterada preserva o `_data_ingestao` anterior. Conferido: duas execuções seguidas produzem os onze Parquet byte a byte idênticos.
+
+Detalhes de implementação, nomes de coluna do JSON do IBGE e decisões de leitura em [`docs/membro1_bronze.md`](docs/membro1_bronze.md).
 
 ### Silver
 
@@ -214,4 +225,4 @@ O pipeline usará `logging` com entradas e saídas por etapa. Erros não serão 
 
 A idempotência será verificada com as mesmas fontes, cache, de-para e dependências: duas execuções deverão manter conteúdos, chaves e totais iguais, sem acumular duplicatas. Isso não exige que o arquivo físico do banco DuckDB tenha bytes idênticos.
 
-As saídas reais, amostras e limitações serão apresentadas após cada camada implementada. A próxima etapa é a bronze, após revisão desta estrutura.
+As saídas reais, amostras e limitações são apresentadas após cada camada implementada. As da bronze estão em [`docs/membro1_bronze.md`](docs/membro1_bronze.md); a próxima etapa é a silver.
