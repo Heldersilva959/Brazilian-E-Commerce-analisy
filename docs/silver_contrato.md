@@ -58,6 +58,7 @@ permanecer string para preservar zeros à esquerda.
 | `data/silver/vendedores.parquet` | um vendedor | `seller_id` |
 | `data/silver/geolocalizacao_pontos.parquet` | um ponto bruto de geolocalização, com flag de validade | grão do arquivo original (sem PK) |
 | `data/silver/geolocalizacao_cep.parquet` | um prefixo de CEP | `cep_prefixo` |
+| `data/silver/municipios.parquet` | um município do cadastro do IBGE | `cod_ibge` |
 
 Nenhuma tabela silver junta pedidos com itens, pagamentos ou avaliações — isso
 é responsabilidade da gold, para não multiplicar linhas antes da hora.
@@ -261,6 +262,40 @@ e conferidas linha a linha contra os números levantados nas seções acima:
 - `distancia_km` (vendedor–cliente) depende do ponto representativo municipal
   que o Membro 3 só calcula depois de receber `geolocalizacao_cep` — por isso
   não está nesta camada; fica para a integração/gold.
-- Limiar de "porte municipal" é do Membro 3/4, não tratado aqui.
+- ~~Limiar de "porte municipal" é do Membro 3/4, não tratado aqui.~~ Resolvido:
+  o contrato de dados §4.9 coloca `porte_municipio` nesta camada, e a regra
+  implementada é a de lá — ver seção 12.
 - O limite mínimo de 5 observações para a mediana de categoria de produto é
   uma escolha minha, sujeita a revisão do grupo na reunião de alinhamento.
+
+## 12. `municipios` — cadastro municipal canônico
+
+Entregável desta camada segundo o contrato de dados §4.9, e insumo obrigatório
+da integração geográfica (§5.2). Junta o JSON de localidades do IBGE com o CSV
+socioeconômico do SIDRA **pelo código IBGE**, nunca por nome — é justamente o
+nome que não bate entre as bases.
+
+| Coluna | Tipo | Origem |
+| --- | --- | --- |
+| `cod_ibge` | VARCHAR(7) | IBGE, PK |
+| `municipio` | VARCHAR | IBGE, nome oficial acentuado |
+| `municipio_normalizado` | VARCHAR | `normalizar_texto()` de `src/utils/normalizacao.py` |
+| `uf` | VARCHAR(2) | IBGE |
+| `nome_uf` | VARCHAR | IBGE |
+| `regiao` | VARCHAR | IBGE |
+| `mesorregiao`, `microrregiao` | VARCHAR | IBGE, nulos quando o ramo não existe |
+| `populacao` | BIGINT | SIDRA, nulo legítimo se ausente |
+| `pib_per_capita` | DECIMAL(18,2) | SIDRA, nulo legítimo se ausente |
+| `ano_referencia_indicadores` | INTEGER | SIDRA, 2017 |
+| `porte_municipio` | VARCHAR | Derivado: `Pequeno` (< 50 mil), `Médio` (50–500 mil), `Grande` (> 500 mil), `Não informado` |
+
+**Município sem microrregião.** Um dos 5.571 municípios — `5101837`, Boa
+Esperança do Norte/MT, criado depois da última revisão da malha — não tem o
+ramo `microrregiao`, e a bronze grava essas colunas como string vazia. `uf`,
+`nome_uf` e `regiao` caem para o ramo `regiao_imediata` nesse caso, em vez de
+sair nulas; `mesorregiao` e `microrregiao` ficam nulas, que é o correto.
+
+**Resultado real:** 5.571 linhas, `cod_ibge` único, nenhuma UF nula. Um único
+município sem indicadores do SIDRA — o mesmo 5101837, que não existia em 2017
+— e por isso com `porte_municipio = 'Não informado'`. Distribuição de porte:
+4.905 Pequeno, 623 Médio, 42 Grande, 1 Não informado.

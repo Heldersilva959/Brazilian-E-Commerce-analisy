@@ -26,6 +26,8 @@ from pathlib import Path
 
 import duckdb
 
+from ..utils.normalizacao import registrar_no_duckdb
+
 RAIZ = Path(__file__).resolve().parents[2]
 DIR_BRONZE = RAIZ / "data" / "bronze"
 DIR_SILVER = RAIZ / "data" / "silver"
@@ -42,7 +44,14 @@ BRONZE_ESPERADA: dict[str, Path] = {
     "vendedores": DIR_BRONZE / "olist_vendedores.parquet",
     "geolocalizacao": DIR_BRONZE / "olist_geolocalizacao.parquet",
     "traducao_categorias": DIR_BRONZE / "olist_traducao_categoria.parquet",
+    "ibge_municipios": DIR_BRONZE / "ibge_municipios.parquet",
+    "socioeconomico_municipios": DIR_BRONZE / "socioeconomico_municipios.parquet",
 }
+
+# Faixas de porte do municipio (contrato de dados, secao 4.9). Populacao
+# ausente nao vira zero: cai em "Nao informado".
+PORTE_PEQUENO_ATE = 50_000
+PORTE_MEDIO_ATE = 500_000
 
 # Caixa delimitadora aproximada do territorio brasileiro, usada so para
 # sinalizar coordenadas claramente invalidas antes da mediana por CEP.
@@ -439,9 +448,77 @@ def transformar_geolocalizacao(con: duckdb.DuckDBPyConnection) -> tuple[Path, Pa
     return destino_pontos, destino_cep
 
 
+def transformar_municipios(con: duckdb.DuckDBPyConnection) -> Path:
+    """Cadastro municipal canonico: IBGE + SIDRA, unidos pelo codigo.
+
+    Contrato de dados, secao 4.9. A juncao e sempre por `cod_ibge` -- nunca
+    por nome, que e justamente o que nao bate entre as bases. Indicador
+    ausente permanece nulo; a integracao (membro 3) consome esta tabela.
+
+    Um municipio do JSON do IBGE (5101837, Boa Esperanca do Norte/MT) nao tem
+    o ramo `microrregiao`, e a bronze grava essas colunas como string vazia.
+    Por isso UF e regiao caem para o ramo `regiao_imediata` quando o primeiro
+    vem vazio, em vez de sair nulo.
+    """
+    arquivos = _tabelas_requeridas(["ibge_municipios", "socioeconomico_municipios"])
+    sql = f"""
+        with ibge as (
+            select
+                id as cod_ibge,
+                nome as municipio,
+                normalizar_texto(nome) as municipio_normalizado,
+                coalesce(
+                    nullif(trim(microrregiao_mesorregiao_uf_sigla), ''),
+                    nullif(trim(regiao_imediata_regiao_intermediaria_uf_sigla), '')
+                ) as uf,
+                coalesce(
+                    nullif(trim(microrregiao_mesorregiao_uf_nome), ''),
+                    nullif(trim(regiao_imediata_regiao_intermediaria_uf_nome), '')
+                ) as nome_uf,
+                coalesce(
+                    nullif(trim(microrregiao_mesorregiao_uf_regiao_nome), ''),
+                    nullif(trim(regiao_imediata_regiao_intermediaria_uf_regiao_nome), '')
+                ) as regiao,
+                nullif(trim(microrregiao_mesorregiao_nome), '') as mesorregiao,
+                nullif(trim(microrregiao_nome), '') as microrregiao
+            from read_parquet('{arquivos["ibge_municipios"].as_posix()}')
+        ),
+        socio as (
+            select
+                cod_ibge,
+                cast(nullif(trim(ano_referencia), '') as integer) as ano_referencia_indicadores,
+                cast(nullif(trim(populacao_estimada), '') as bigint) as populacao,
+                cast(nullif(trim(pib_per_capita), '') as decimal(18, 2)) as pib_per_capita
+            from read_parquet('{arquivos["socioeconomico_municipios"].as_posix()}')
+        )
+        select
+            i.cod_ibge,
+            i.municipio,
+            i.municipio_normalizado,
+            i.uf,
+            i.nome_uf,
+            i.regiao,
+            i.mesorregiao,
+            i.microrregiao,
+            s.populacao,
+            s.pib_per_capita,
+            s.ano_referencia_indicadores,
+            case
+                when s.populacao is null then 'Não informado'
+                when s.populacao < {PORTE_PEQUENO_ATE} then 'Pequeno'
+                when s.populacao <= {PORTE_MEDIO_ATE} then 'Médio'
+                else 'Grande'
+            end as porte_municipio
+        from ibge i
+        left join socio s on s.cod_ibge = i.cod_ibge
+    """
+    return _gravar(con, sql, DIR_SILVER / "municipios.parquet")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     con = duckdb.connect()
+    registrar_no_duckdb(con)
     transformar_pedidos(con)
     transformar_itens_pedido(con)
     transformar_pagamentos(con)
@@ -450,6 +527,7 @@ def main() -> None:
     transformar_clientes(con)
     transformar_vendedores(con)
     transformar_geolocalizacao(con)
+    transformar_municipios(con)
 
 
 if __name__ == "__main__":
