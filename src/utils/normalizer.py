@@ -1,24 +1,19 @@
-import unicodedata
-import re
+"""Compatibilidade: o nome antigo da normalizacao.
 
-def normalize_city_name(city_name: str) -> str:
-    """
-    Remove acentos, converte para minúsculas e remove espaços extras/caracteres especiais.
-    """
-    if not isinstance(city_name, str):
-        return ""
-    
-    # Remove acentos
-    normalized = unicodedata.normalize('NFKD', city_name).encode('ASCII', 'ignore').decode('utf-8')
-    
-    # Converte para minúsculas
-    normalized = normalized.lower()
-    
-    # Remove aspas, apóstrofos e hifens (substitui hifen por espaço para manter padrão)
-    normalized = re.sub(r"['\"]", "", normalized)
-    normalized = normalized.replace('-', ' ')
-    
-    # Remove múltiplos espaços
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
-    return normalized
+A implementacao canonica passou para `src/utils/normalizacao.py`, com o nome
+de funcao que o contrato de dados fixa (secao 5.1). Este modulo continua aqui
+so para nao quebrar `src/silver/prep_geolocation_ibge.py`, que foi o
+prototipo do match exato.
+
+Codigo novo importa de `src.utils.normalizacao`.
+"""
+
+from __future__ import annotations
+
+from .normalizacao import chave_sem_espacos, normalizar_texto
+
+__all__ = ["normalize_city_name", "chave_sem_espacos", "normalizar_texto"]
+
+# Nome antigo mantido como apelido -- uma implementacao so, como manda o
+# contrato: nenhuma logica de normalizacao vive neste arquivo.
+normalize_city_name = normalizar_texto
