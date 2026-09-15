@@ -96,7 +96,7 @@ A resposta original será preservada, com registro da data de obtenção. Não s
 
 ### 3. SIDRA — retrato socioeconômico de 2017
 
-Preparar manualmente `data/raw/socioeconomico/indicadores_municipais.csv` com este cabeçalho exato:
+Preparar `data/raw/socioeconomico/indicadores_municipais.csv` com este cabeçalho exato:
 
 ```csv
 cod_ibge,ano_referencia,populacao_estimada,pib_per_capita
@@ -118,9 +118,9 @@ Regras:
 - Selecionar todos os municípios e o ano de 2017 para ambos os indicadores.
 - Não misturar PIB total, valores em milhares de reais e PIB per capita.
 
-Referências: [população estimada, tabela 6579](https://sidra.ibge.gov.br/tabela/6579) e [PIB municipal, tabela 5938](https://sidra.ibge.gov.br/tabela/5938). Na segunda, selecionar o indicador PIB per capita em reais.
+Referências: [população estimada, tabela 6579](https://sidra.ibge.gov.br/tabela/6579), variável 9324, e [PIB municipal, tabela 5938](https://sidra.ibge.gov.br/tabela/5938), variável 37, em Mil Reais. A tabela 5938 não publica PIB per capita — nenhuma tabela da pesquisa publica —, então o indicador é derivado do PIB dividido pela população do mesmo ano e convertido para reais por habitante.
 
-Guardar as exportações originais em `data/raw/socioeconomico/originais/` e documentar em `docs/` os filtros, unidades e ajustes feitos para preparar o CSV. O pipeline consumirá o arquivo consolidado acima; os originais serão preservados para auditoria, sem serem concatenados automaticamente à entrada.
+As duas exportações e o cadastro de municípios são obtidos por `python src/utils/baixar_fontes_ibge.py`, que reutiliza o que já estiver em disco e grava um `.meta.json` com URL, data de obtenção e SHA-256 ao lado de cada original. Guardar as exportações originais em `data/raw/socioeconomico/originais/`; os filtros, unidades e ajustes estão documentados em [`docs/fontes_ibge_sidra.md`](docs/fontes_ibge_sidra.md). O pipeline consumirá o arquivo consolidado acima; os originais serão preservados para auditoria, sem serem concatenados automaticamente à entrada.
 
 Os indicadores de 2017 serão atributos fixos da geografia para todo o período de vendas. Não permitirão concluir sobre evolução anual de população ou PIB.
 
