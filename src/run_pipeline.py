@@ -1,6 +1,7 @@
 """Orquestrador do pipeline medalhao.
 
-Executa as etapas na ordem bronze -> silver -> integracao -> gold -> qualidade.
+Executa as etapas na ordem bronze -> silver -> integracao -> validacao -> gold
+-> qualidade.
 Cada etapa mora no modulo do seu responsavel; este arquivo so chama, cronometra
 e registra o que saiu.
 
@@ -54,6 +55,9 @@ ETAPAS: tuple[Etapa, ...] = (
     Etapa("bronze", "src.bronze.ingest", "membro 1", (DIR_BRONZE,)),
     Etapa("silver", "src.silver.transform", "membro 2", (DIR_SILVER,)),
     Etapa("integracao", "src.silver.integracao_municipios", "membro 3", (DIR_SILVER,)),
+    # Roda antes da gold de proposito: a gold so deve montar as fatos sobre
+    # camadas que passaram na validacao. Reprovacao aqui derruba o pipeline.
+    Etapa("validacao", "src.qualidade.validar_camadas", "qualidade", (DIR_SILVER,)),
     Etapa("gold", "src.gold.dimensional", "membro 4", (DIR_GOLD,)),
     Etapa("qualidade", "src.gold.qualidade", "membro 4", (DIR_GOLD,)),
 )

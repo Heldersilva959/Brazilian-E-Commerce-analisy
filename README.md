@@ -9,12 +9,13 @@ O projeto prioriza SQL legível, decisões de negócio documentadas e execução
 Implementação com revisão ao final de cada etapa:
 
 1. **Bronze: pronta e executada.** Onze tabelas, 1.562.064 linhas, contagem conferida arquivo por arquivo. Ver [`docs/membro1_bronze.md`](docs/membro1_bronze.md).
-2. **Silver: pronta e executada.** Nove tabelas geradas a partir da bronze real, 1.564.864 linhas. Ver [`docs/silver_contrato.md`](docs/silver_contrato.md).
-3. Integração de municípios: match exato, fallback geográfico e de-para manual. Em desenvolvimento.
-4. Gold: dimensões e fatos materializadas. Em desenvolvimento.
-5. Qualidade: validações e relatório. Em desenvolvimento.
+2. **Silver: pronta e executada.** Dez tabelas geradas a partir da bronze real, 1.570.435 linhas. Ver [`docs/silver_contrato.md`](docs/silver_contrato.md).
+3. **Integração de municípios: pronta e executada.** Match exato, fallback geográfico e de-para manual; 99,91% dos clientes e 99,94% dos vendedores resolvidos. Ver [`docs/relatorio_match.md`](docs/relatorio_match.md).
+4. **Validação de bronze e silver: pronta e executada.** 121 testes a cada execução. Ver [`docs/validacao_bronze_silver.md`](docs/validacao_bronze_silver.md).
+5. Gold: dimensões e fatos materializadas. Em desenvolvimento.
+6. Qualidade da gold: validações e relatório. Em desenvolvimento.
 
-O orquestrador (`src/run_pipeline.py`) já roda de ponta a ponta: as etapas ainda não escritas são anunciadas e puladas, e o pipeline segue. As taxas de match e o relatório de qualidade ainda não foram calculados.
+O orquestrador (`src/run_pipeline.py`) já roda de ponta a ponta: as etapas ainda não escritas são anunciadas e puladas, e o pipeline segue. O relatório de qualidade da gold ainda não foi calculado.
 
 O levantamento das fontes brutas — contagens, colunas, tipos, vazios, encoding e `sha256` de cada arquivo — está em [`docs/inventario_fontes.md`](docs/inventario_fontes.md).
 
@@ -37,9 +38,9 @@ python -m venv .venv
 ## Execução
 
 ```powershell
-python -m src.run_pipeline                  # bronze -> silver -> integracao -> gold -> qualidade
-python -m src.run_pipeline --etapa bronze   # só uma etapa
-python -m src.run_pipeline --ate silver     # da primeira etapa até essa
+python -m src.run_pipeline                    # bronze -> silver -> integracao -> validacao -> gold -> qualidade
+python -m src.run_pipeline --etapa bronze     # só uma etapa
+python -m src.run_pipeline --ate validacao    # da primeira etapa até essa
 ```
 
 O log traz, por etapa, horário de início, duração, tabelas geradas e contagem de linhas de entrada e de saída. Etapa cujo módulo ainda não foi escrito é anunciada e pulada; erro dentro de uma etapa que existe derruba a execução, com o log dizendo qual etapa quebrou.
@@ -69,7 +70,7 @@ Não são usados dados sintéticos ou mocks. Arquivo obrigatório ausente interr
 └── README.md
 ```
 
-Já existem `src/run_pipeline.py`, `src/bronze/ingest.py` e `src/silver/transform.py`. Faltam `src/silver/integracao_municipios.py`, `src/gold/dimensional.py`, `src/gold/qualidade.py` e `src/utils/normalizacao.py`, que entram na etapa de cada responsável.
+Já existem `src/run_pipeline.py`, `src/bronze/ingest.py`, `src/silver/transform.py`, `src/silver/integracao_municipios.py`, `src/utils/normalizacao.py` e `src/qualidade/validar_camadas.py`. Faltam `src/gold/dimensional.py` e `src/gold/qualidade.py`, que entram na etapa do membro 4.
 
 `data/raw/` é versionado no Git; `data/bronze/`, `data/silver/` e `data/gold/` não, porque são reconstruídos a cada execução (contrato §1).
 
@@ -179,6 +180,16 @@ Parquet com nomes padronizados em português, timestamps e números tipados. Val
 - Derivadas: `dias_ate_entrega`, `dias_atraso`, `flag_atraso`, `distancia_km`, `ano_mes` e `faixa_preco`. Distância é geodésica aproximada entre vendedor e cliente, não distância rodoviária.
 
 Limiares de faixas de preço, peso, parcelas e porte municipal, assim como a regra de outliers, serão explicitados na implementação da respectiva etapa.
+
+### Validação de bronze e silver
+
+`src/qualidade/validar_camadas.py` roda depois da integração e antes da gold, para que as fatos só sejam montadas sobre camadas conferidas. São cinco famílias de teste: `BRZ-*` (cópia literal, linhagem, contagem recontada contra `data/raw/` e `sha256` da origem), `SLV-*` (PK, órfão, grão preservado contra a bronze, reconciliação monetária e regra de negócio), `INT-*` (método de match, raio do fallback, unicidade do mapeamento e cobertura socioeconômica), `CTR-*` (divergências entre a silver real e o contrato de dados) e `REP-*` (reprodutibilidade).
+
+O módulo importa as constantes das camadas que valida — `BRONZE_ESPERADA`, a caixa delimitadora do Brasil, `RAIO_ACEITE_KM`, `contar_registros`, `sha256_arquivo` — em vez de repetir os valores, para que a validação não possa divergir em silêncio da regra validada.
+
+Classificação e desfecho seguem [`docs/plano_qualidade.md`](docs/plano_qualidade.md) §3 e §20: `REPROVADO` derruba o pipeline, mas só depois de o relatório estar gravado. As famílias `CTR-*` apenas reportam — renomear coluna agora quebraria a integração, que já consome os nomes atuais; a decisão é do grupo, numa revisão de contrato.
+
+Saídas: [`docs/validacao_bronze_silver.md`](docs/validacao_bronze_silver.md) e `data/silver/validacao_bronze_silver.json`, este para a gold consumir sem reparsear markdown. Ambos são recriados a cada execução.
 
 ### Gold
 
