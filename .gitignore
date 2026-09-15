@@ -2,3 +2,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Saidas do pipeline: derivadas de data/raw/ e reconstruidas a cada execucao.
+# Commita-las geraria conflito binario toda vez que alguem rodasse o pipeline.
+# data/raw/ continua versionado -- ver secao 1 do contrato de dados.
+data/bronze/*
+data/silver/*
+data/gold/*
+!data/bronze/.gitkeep
+!data/silver/.gitkeep
+!data/gold/.gitkeep
+*.parquet
+*.duckdb
